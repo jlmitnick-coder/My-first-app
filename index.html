@@ -1,27 +1,496 @@
 <!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>My iPad App</title>
-    <style>
-      body { font-family: -apple-system, system-ui, sans-serif; margin: 24px; }
-      button { font-size: 18px; padding: 12px 16px; }
-      #count { font-weight: 700; }
-    </style>
-  </head>
-  <body>
-    <h1>It runs ✅</h1>
-    <p>You’ve clicked <span id="count">0</span> times.</p>
-    <button id="btn">Click me</button>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Swipe Dodger</title>
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      display: grid;
+      place-items: center;
+      background: #0b0f17;
+      color: #e9eef7;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      touch-action: none; /* we handle swipes */
+    }
+    .wrap {
+      width: min(92vw, 520px);
+      display: grid;
+      gap: 12px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+      font-size: 14px;
+      opacity: 0.95;
+    }
+    .pill {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.14);
+      padding: 6px 10px;
+      border-radius: 999px;
+    }
+    canvas {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      background: radial-gradient(1200px 800px at 50% 15%, rgba(120,160,255,0.20), transparent 55%),
+                  linear-gradient(180deg, #0b0f17, #070a10);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+      display: block;
+    }
+    .controls {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+    }
+    button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      color: inherit;
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    button:active { transform: translateY(1px); }
+    .hint {
+      font-size: 13px;
+      opacity: 0.8;
+      line-height: 1.35;
+      padding: 0 2px;
+    }
+    .kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      padding: 1px 6px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.06);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="pill">Score: <span id="score">0</span></div>
+      <div class="pill">Best: <span id="best">0</span></div>
+      <div class="pill">Level: <span id="level">1</span></div>
+    </div>
 
-    <script>
-      let n = 0;
-      const count = document.getElementById("count");
-      document.getElementById("btn").addEventListener("click", () => {
-        n += 1;
-        count.textContent = String(n);
+    <canvas id="c" width="600" height="800" aria-label="Game canvas"></canvas>
+
+    <div class="controls">
+      <button id="startBtn">Start / Restart</button>
+      <button id="pauseBtn">Pause</button>
+    </div>
+
+    <div class="hint">
+      Move the blue ship to dodge falling red blocks.<br/>
+      iPad: <span class="kbd">Swipe</span> or <span class="kbd">drag</span>. Keyboard: <span class="kbd">←</span>/<span class="kbd">→</span> or <span class="kbd">A</span>/<span class="kbd">D</span>.
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ====== DOM ======
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: true });
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const levelEl = document.getElementById('level');
+  const startBtn = document.getElementById('startBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+
+  // ====== Utilities ======
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  // ====== Hi-score ======
+  const BEST_KEY = 'swipeDodgerBest_v1';
+  let best = Number(localStorage.getItem(BEST_KEY) || 0);
+  bestEl.textContent = String(best);
+
+  // ====== Game State ======
+  const W = canvas.width, H = canvas.height;
+
+  const ship = {
+    w: 64, h: 36,
+    x: W/2, y: H - 90,
+    vx: 0,
+    speed: 720, // px/sec max
+  };
+
+  let obstacles = [];
+  let particles = [];
+
+  let running = false;
+  let paused = false;
+  let gameOver = false;
+
+  let score = 0;
+  let level = 1;
+
+  // spawn tuning (gets harder over time)
+  let spawnTimer = 0;
+  let spawnEvery = 0.85; // seconds
+  let obstacleSpeed = 260; // base fall speed
+
+  // input
+  let leftHeld = false, rightHeld = false;
+  let pointerDown = false;
+  let pointerStartX = 0;
+  let shipStartX = 0;
+
+  // ====== Drawing helpers ======
+  function roundedRect(x, y, w, h, r) {
+    r = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+    ctx.closePath();
+  }
+
+  function drawShip() {
+    const x = ship.x - ship.w/2;
+    const y = ship.y - ship.h/2;
+
+    // glow
+    ctx.save();
+    ctx.shadowColor = 'rgba(120,160,255,0.6)';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = 'rgba(120,160,255,0.14)';
+    roundedRect(x-6, y-6, ship.w+12, ship.h+12, 18);
+    ctx.fill();
+    ctx.restore();
+
+    // body
+    ctx.fillStyle = '#7aa2ff';
+    roundedRect(x, y, ship.w, ship.h, 16);
+    ctx.fill();
+
+    // cockpit
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    roundedRect(x + ship.w*0.58, y + ship.h*0.22, ship.w*0.30, ship.h*0.56, 12);
+    ctx.fill();
+
+    // thruster
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    roundedRect(x + 8, y + ship.h*0.30, ship.w*0.16, ship.h*0.40, 10);
+    ctx.fill();
+  }
+
+  function drawObstacle(o) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,80,100,0.45)';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = '#ff4f64';
+    roundedRect(o.x - o.w/2, o.y - o.h/2, o.w, o.h, 14);
+    ctx.fill();
+    ctx.restore();
+
+    // detail stripe
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    roundedRect(o.x - o.w/2 + 8, o.y - o.h/2 + 10, o.w - 16, 10, 10);
+    ctx.fill();
+  }
+
+  function drawParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life -= dt;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 600 * dt;
+      const a = clamp(p.life / p.maxLife, 0, 1);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function spawnExplosion(x, y) {
+    const n = 26;
+    for (let i = 0; i < n; i++) {
+      const ang = rand(0, Math.PI * 2);
+      const sp = rand(160, 520);
+      particles.push({
+        x, y,
+        vx: Math.cos(ang) * sp,
+        vy: Math.sin(ang) * sp - rand(0, 220),
+        r: rand(2.5, 6),
+        life: rand(0.35, 0.75),
+        maxLife: 0.75,
+        color: Math.random() < 0.65 ? 'rgba(255,80,100,0.95)' : 'rgba(255,255,255,0.85)',
       });
-    </script>
-  </body>
+    }
+  }
+
+  // ====== Game logic ======
+  function reset() {
+    obstacles = [];
+    particles = [];
+    score = 0;
+    level = 1;
+    spawnTimer = 0;
+    spawnEvery = 0.85;
+    obstacleSpeed = 260;
+
+    ship.x = W/2;
+    ship.vx = 0;
+
+    running = true;
+    paused = false;
+    gameOver = false;
+
+    scoreEl.textContent = '0';
+    levelEl.textContent = '1';
+    pauseBtn.textContent = 'Pause';
+  }
+
+  function spawnObstacle() {
+    // lanes-ish, but with variability
+    const w = rand(54, 92);
+    const h = rand(48, 86);
+    const x = rand(w/2 + 16, W - w/2 - 16);
+    const y = -h;
+
+    // occasional "fast skinny" or "slow wide" variety
+    const kind = Math.random();
+    let speed = obstacleSpeed * rand(0.9, 1.25);
+    let ww = w, hh = h;
+    if (kind < 0.15) { ww = rand(44, 60); hh = rand(70, 120); speed *= 1.2; }
+    else if (kind > 0.85) { ww = rand(86, 120); hh = rand(44, 64); speed *= 0.95; }
+
+    obstacles.push({ x, y, w: ww, h: hh, vy: speed });
+  }
+
+  function updateDifficulty() {
+    // Level up every ~10 points
+    const newLevel = 1 + Math.floor(score / 10);
+    if (newLevel !== level) {
+      level = newLevel;
+      levelEl.textContent = String(level);
+
+      // Harder: spawn more, fall faster (gently)
+      spawnEvery = clamp(0.85 - (level - 1) * 0.06, 0.38, 0.85);
+      obstacleSpeed = 260 + (level - 1) * 22;
+    }
+  }
+
+  function collide(a, b) {
+    // a: ship, b: obstacle (both center-based)
+    const ax1 = a.x - a.w/2, ax2 = a.x + a.w/2;
+    const ay1 = a.y - a.h/2, ay2 = a.y + a.h/2;
+    const bx1 = b.x - b.w/2, bx2 = b.x + b.w/2;
+    const by1 = b.y - b.h/2, by2 = b.y + b.h/2;
+    return ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1;
+  }
+
+  function setGameOver() {
+    gameOver = true;
+    running = false;
+    spawnExplosion(ship.x, ship.y);
+
+    if (score > best) {
+      best = score;
+      localStorage.setItem(BEST_KEY, String(best));
+      bestEl.textContent = String(best);
+    }
+  }
+
+  // ====== Rendering ======
+  function drawBackground() {
+    // starfield-ish dots
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    for (let i = 0; i < 42; i++) {
+      const x = (i * 97) % W;
+      const y = ((i * 211) % H);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.fillRect(x, y, 2, 2);
+    }
+    ctx.restore();
+
+    // safe-zone line
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.setLineDash([10, 10]);
+    ctx.beginPath();
+    ctx.moveTo(22, ship.y - 10);
+    ctx.lineTo(W - 22, ship.y - 10);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawOverlay(text1, text2) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    roundedRect(30, 250, W - 60, 300, 22);
+    ctx.fill();
+
+    ctx.fillStyle = '#e9eef7';
+    ctx.textAlign = 'center';
+    ctx.font = '700 44px -apple-system, system-ui, sans-serif';
+    ctx.fillText(text1, W/2, 350);
+
+    ctx.globalAlpha = 0.9;
+    ctx.font = '500 18px -apple-system, system-ui, sans-serif';
+    ctx.fillText(text2, W/2, 402);
+
+    ctx.globalAlpha = 0.85;
+    ctx.font = '500 16px -apple-system, system-ui, sans-serif';
+    ctx.fillText('Tap Start / Restart', W/2, 455);
+    ctx.restore();
+  }
+
+  // ====== Main loop ======
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+
+    ctx.clearRect(0, 0, W, H);
+
+    drawBackground();
+
+    // Update
+    if (running && !paused) {
+      // keyboard acceleration
+      const target = (rightHeld ? 1 : 0) - (leftHeld ? 1 : 0);
+      ship.vx = target * ship.speed;
+
+      ship.x += ship.vx * dt;
+      ship.x = clamp(ship.x, ship.w/2 + 14, W - ship.w/2 - 14);
+
+      // spawn
+      spawnTimer += dt;
+      while (spawnTimer >= spawnEvery) {
+        spawnTimer -= spawnEvery;
+        spawnObstacle();
+      }
+
+      // obstacles
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const o = obstacles[i];
+        o.y += o.vy * dt;
+
+        // passed bottom => score
+        if (o.y - o.h/2 > H + 20) {
+          obstacles.splice(i, 1);
+          score += 1;
+          scoreEl.textContent = String(score);
+          updateDifficulty();
+          continue;
+        }
+
+        if (collide(ship, o)) {
+          setGameOver();
+          break;
+        }
+      }
+    }
+
+    // Draw entities
+    for (const o of obstacles) drawObstacle(o);
+    drawShip();
+    drawParticles(dt);
+
+    // overlays
+    if (!running && !gameOver && !paused) {
+      drawOverlay('Swipe Dodger', 'Dodge the falling blocks.');
+    } else if (paused) {
+      drawOverlay('Paused', 'Resume when ready.');
+    } else if (gameOver) {
+      drawOverlay('Game Over', `Final score: ${score}`);
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ====== Controls ======
+  startBtn.addEventListener('click', () => reset());
+
+  pauseBtn.addEventListener('click', () => {
+    if (!running && !gameOver) return;
+    if (gameOver) return;
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  });
+
+  // Pointer / touch: drag ship horizontally
+  function pointerPosX(e) {
+    // map clientX to canvas coordinate system
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * W;
+    return x;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointerDown = true;
+    pointerStartX = pointerPosX(e);
+    shipStartX = ship.x;
+
+    // If game hasn't started yet, make a tap start it feel natural.
+    if (!running && !gameOver && !paused) reset();
+    if (gameOver) reset();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pointerDown) return;
+    const x = pointerPosX(e);
+    const dx = x - pointerStartX;
+    ship.x = clamp(shipStartX + dx, ship.w/2 + 14, W - ship.w/2 - 14);
+  });
+
+  canvas.addEventListener('pointerup', () => { pointerDown = false; });
+  canvas.addEventListener('pointercancel', () => { pointerDown = false; });
+
+  // Keyboard controls (works if you open on a computer, or iPad with keyboard)
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'arrowleft' || k === 'a') leftHeld = true;
+    if (k === 'arrowright' || k === 'd') rightHeld = true;
+
+    if (k === ' ' || k === 'enter') {
+      if (!running || gameOver) reset();
+      else {
+        paused = !paused;
+        pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+      }
+      e.preventDefault();
+    }
+  });
+
+  window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'arrowleft' || k === 'a') leftHeld = false;
+    if (k === 'arrowright' || k === 'd') rightHeld = false;
+  });
+
+  // Start in title screen state
+  running = false;
+  paused = false;
+  gameOver = false;
+})();
+</script>
+</body>
 </html>
