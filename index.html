@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Swipe Dodger</title>
+  <title>Swipe Dodger (Harder)</title>
   <style>
     :root { color-scheme: light dark; }
     html, body { height: 100%; margin: 0; }
@@ -16,13 +16,9 @@
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
-      touch-action: none; /* we handle swipes */
+      touch-action: none;
     }
-    .wrap {
-      width: min(92vw, 520px);
-      display: grid;
-      gap: 12px;
-    }
+    .wrap { width: min(92vw, 520px); display: grid; gap: 12px; }
     .topbar {
       display: flex;
       justify-content: space-between;
@@ -30,6 +26,7 @@
       align-items: baseline;
       font-size: 14px;
       opacity: 0.95;
+      flex-wrap: wrap;
     }
     .pill {
       background: rgba(255,255,255,0.08);
@@ -47,11 +44,7 @@
       box-shadow: 0 18px 50px rgba(0,0,0,0.45);
       display: block;
     }
-    .controls {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: 1fr 1fr;
-    }
+    .controls { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
     button {
       appearance: none;
       border: 1px solid rgba(255,255,255,0.18);
@@ -84,6 +77,7 @@
       <div class="pill">Score: <span id="score">0</span></div>
       <div class="pill">Best: <span id="best">0</span></div>
       <div class="pill">Level: <span id="level">1</span></div>
+      <div class="pill">Edge: <span id="edge">OK</span></div>
     </div>
 
     <canvas id="c" width="600" height="800" aria-label="Game canvas"></canvas>
@@ -94,39 +88,37 @@
     </div>
 
     <div class="hint">
-      Move the blue ship to dodge falling red blocks.<br/>
-      iPad: <span class="kbd">Swipe</span> or <span class="kbd">drag</span>. Keyboard: <span class="kbd">←</span>/<span class="kbd">→</span> or <span class="kbd">A</span>/<span class="kbd">D</span>.
+      Dodge the falling blocks.<br/>
+      iPad: <span class="kbd">Swipe</span>/<span class="kbd">drag</span>. Keyboard: <span class="kbd">←</span>/<span class="kbd">→</span> or <span class="kbd">A</span>/<span class="kbd">D</span>.<br/>
+      New: camping the walls too long will end you.
     </div>
   </div>
 
 <script>
 (() => {
-  // ====== DOM ======
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d', { alpha: true });
   const scoreEl = document.getElementById('score');
-  const bestEl = document.getElementById('best');
+  const bestEl  = document.getElementById('best');
   const levelEl = document.getElementById('level');
+  const edgeEl  = document.getElementById('edge');
   const startBtn = document.getElementById('startBtn');
   const pauseBtn = document.getElementById('pauseBtn');
 
-  // ====== Utilities ======
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const rand = (a, b) => a + Math.random() * (b - a);
+  const rand  = (a, b) => a + Math.random() * (b - a);
 
-  // ====== Hi-score ======
-  const BEST_KEY = 'swipeDodgerBest_v1';
+  const BEST_KEY = 'swipeDodgerBest_v2_harder';
   let best = Number(localStorage.getItem(BEST_KEY) || 0);
   bestEl.textContent = String(best);
 
-  // ====== Game State ======
   const W = canvas.width, H = canvas.height;
 
   const ship = {
     w: 64, h: 36,
     x: W/2, y: H - 90,
     vx: 0,
-    speed: 720, // px/sec max
+    speed: 760,
   };
 
   let obstacles = [];
@@ -139,10 +131,14 @@
   let score = 0;
   let level = 1;
 
-  // spawn tuning (gets harder over time)
   let spawnTimer = 0;
-  let spawnEvery = 0.85; // seconds
-  let obstacleSpeed = 260; // base fall speed
+  let spawnEvery = 0.82;
+  let obstacleSpeed = 270;
+
+  // NEW: edge camping penalty
+  const EDGE_MARGIN = 85;       // how close counts as "edge"
+  const EDGE_LIMIT  = 1.9;      // seconds allowed at edge before death
+  let edgeTime = 0;             // accumulates while at edge
 
   // input
   let leftHeld = false, rightHeld = false;
@@ -150,7 +146,6 @@
   let pointerStartX = 0;
   let shipStartX = 0;
 
-  // ====== Drawing helpers ======
   function roundedRect(x, y, w, h, r) {
     r = Math.min(r, w/2, h/2);
     ctx.beginPath();
@@ -166,7 +161,6 @@
     const x = ship.x - ship.w/2;
     const y = ship.y - ship.h/2;
 
-    // glow
     ctx.save();
     ctx.shadowColor = 'rgba(120,160,255,0.6)';
     ctx.shadowBlur = 18;
@@ -175,17 +169,14 @@
     ctx.fill();
     ctx.restore();
 
-    // body
     ctx.fillStyle = '#7aa2ff';
     roundedRect(x, y, ship.w, ship.h, 16);
     ctx.fill();
 
-    // cockpit
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     roundedRect(x + ship.w*0.58, y + ship.h*0.22, ship.w*0.30, ship.h*0.56, 12);
     ctx.fill();
 
-    // thruster
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     roundedRect(x + 8, y + ship.h*0.30, ship.w*0.16, ship.h*0.40, 10);
     ctx.fill();
@@ -193,14 +184,13 @@
 
   function drawObstacle(o) {
     ctx.save();
-    ctx.shadowColor = 'rgba(255,80,100,0.45)';
+    ctx.shadowColor = o.seeker ? 'rgba(255,180,80,0.55)' : 'rgba(255,80,100,0.45)';
     ctx.shadowBlur = 14;
-    ctx.fillStyle = '#ff4f64';
+    ctx.fillStyle = o.seeker ? '#ffb24f' : '#ff4f64';
     roundedRect(o.x - o.w/2, o.y - o.h/2, o.w, o.h, 14);
     ctx.fill();
     ctx.restore();
 
-    // detail stripe
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     roundedRect(o.x - o.w/2 + 8, o.y - o.h/2 + 10, o.w - 16, 10, 10);
     ctx.fill();
@@ -225,34 +215,36 @@
   }
 
   function spawnExplosion(x, y) {
-    const n = 26;
+    const n = 28;
     for (let i = 0; i < n; i++) {
       const ang = rand(0, Math.PI * 2);
-      const sp = rand(160, 520);
+      const sp = rand(170, 560);
       particles.push({
         x, y,
         vx: Math.cos(ang) * sp,
-        vy: Math.sin(ang) * sp - rand(0, 220),
+        vy: Math.sin(ang) * sp - rand(0, 230),
         r: rand(2.5, 6),
-        life: rand(0.35, 0.75),
-        maxLife: 0.75,
+        life: rand(0.35, 0.80),
+        maxLife: 0.80,
         color: Math.random() < 0.65 ? 'rgba(255,80,100,0.95)' : 'rgba(255,255,255,0.85)',
       });
     }
   }
 
-  // ====== Game logic ======
   function reset() {
     obstacles = [];
     particles = [];
     score = 0;
     level = 1;
     spawnTimer = 0;
-    spawnEvery = 0.85;
-    obstacleSpeed = 260;
+    spawnEvery = 0.82;
+    obstacleSpeed = 270;
 
     ship.x = W/2;
     ship.vx = 0;
+
+    edgeTime = 0;
+    edgeEl.textContent = 'OK';
 
     running = true;
     paused = false;
@@ -264,37 +256,45 @@
   }
 
   function spawnObstacle() {
-    // lanes-ish, but with variability
     const w = rand(54, 92);
     const h = rand(48, 86);
-    const x = rand(w/2 + 16, W - w/2 - 16);
+
+    // Slight bias away from dead-center to reduce "one perfect lane"
+    const bias = (Math.random() < 0.5) ? -1 : 1;
+    const base = W/2 + bias * rand(40, 160);
+    const x = clamp(base + rand(-80, 80), w/2 + 16, W - w/2 - 16);
     const y = -h;
 
-    // occasional "fast skinny" or "slow wide" variety
-    const kind = Math.random();
-    let speed = obstacleSpeed * rand(0.9, 1.25);
+    let speed = obstacleSpeed * rand(0.95, 1.30);
     let ww = w, hh = h;
-    if (kind < 0.15) { ww = rand(44, 60); hh = rand(70, 120); speed *= 1.2; }
-    else if (kind > 0.85) { ww = rand(86, 120); hh = rand(44, 64); speed *= 0.95; }
 
-    obstacles.push({ x, y, w: ww, h: hh, vy: speed });
+    // NEW: seeker chance increases with level (capped)
+    const seekerChance = clamp(0.10 + (level - 1) * 0.02, 0.10, 0.28);
+    const seeker = Math.random() < seekerChance;
+
+    // Variety
+    const kind = Math.random();
+    if (kind < 0.14) { ww = rand(44, 60); hh = rand(70, 120); speed *= 1.18; }
+    else if (kind > 0.86) { ww = rand(86, 120); hh = rand(44, 64); speed *= 0.98; }
+
+    // Seeker lateral drift strength
+    const steer = seeker ? (170 + (level - 1) * 10) : 0;
+
+    obstacles.push({ x, y, w: ww, h: hh, vy: speed, seeker, steer });
   }
 
   function updateDifficulty() {
-    // Level up every ~10 points
     const newLevel = 1 + Math.floor(score / 10);
     if (newLevel !== level) {
       level = newLevel;
       levelEl.textContent = String(level);
 
-      // Harder: spawn more, fall faster (gently)
-      spawnEvery = clamp(0.85 - (level - 1) * 0.06, 0.38, 0.85);
-      obstacleSpeed = 260 + (level - 1) * 22;
+      spawnEvery = clamp(0.82 - (level - 1) * 0.06, 0.34, 0.82);
+      obstacleSpeed = 270 + (level - 1) * 26;
     }
   }
 
   function collide(a, b) {
-    // a: ship, b: obstacle (both center-based)
     const ax1 = a.x - a.w/2, ax2 = a.x + a.w/2;
     const ay1 = a.y - a.h/2, ay2 = a.y + a.h/2;
     const bx1 = b.x - b.w/2, bx2 = b.x + b.w/2;
@@ -302,7 +302,7 @@
     return ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1;
   }
 
-  function setGameOver() {
+  function setGameOver(reasonText) {
     gameOver = true;
     running = false;
     spawnExplosion(ship.x, ship.y);
@@ -312,11 +312,23 @@
       localStorage.setItem(BEST_KEY, String(best));
       bestEl.textContent = String(best);
     }
+
+    if (reasonText) edgeEl.textContent = reasonText;
   }
 
-  // ====== Rendering ======
   function drawBackground() {
-    // starfield-ish dots
+    // edge danger zones (subtle red glow)
+    const warn = clamp(edgeTime / EDGE_LIMIT, 0, 1);
+
+    if (warn > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.25 * warn;
+      ctx.fillStyle = '#ff4f64';
+      ctx.fillRect(0, 0, EDGE_MARGIN, H);
+      ctx.fillRect(W - EDGE_MARGIN, 0, EDGE_MARGIN, H);
+      ctx.restore();
+    }
+
     ctx.save();
     ctx.globalAlpha = 0.35;
     for (let i = 0; i < 42; i++) {
@@ -327,7 +339,6 @@
     }
     ctx.restore();
 
-    // safe-zone line
     ctx.save();
     ctx.globalAlpha = 0.18;
     ctx.strokeStyle = 'rgba(255,255,255,0.35)';
@@ -350,7 +361,7 @@
     ctx.font = '700 44px -apple-system, system-ui, sans-serif';
     ctx.fillText(text1, W/2, 350);
 
-    ctx.globalAlpha = 0.9;
+    ctx.globalAlpha = 0.92;
     ctx.font = '500 18px -apple-system, system-ui, sans-serif';
     ctx.fillText(text2, W/2, 402);
 
@@ -360,24 +371,33 @@
     ctx.restore();
   }
 
-  // ====== Main loop ======
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
 
     ctx.clearRect(0, 0, W, H);
-
     drawBackground();
 
-    // Update
     if (running && !paused) {
-      // keyboard acceleration
       const target = (rightHeld ? 1 : 0) - (leftHeld ? 1 : 0);
       ship.vx = target * ship.speed;
 
       ship.x += ship.vx * dt;
       ship.x = clamp(ship.x, ship.w/2 + 14, W - ship.w/2 - 14);
+
+      // NEW: edge timer
+      const atEdge = (ship.x < EDGE_MARGIN) || (ship.x > W - EDGE_MARGIN);
+      if (atEdge) edgeTime += dt;
+      else edgeTime = Math.max(0, edgeTime - dt * 1.4); // recover faster than you build up
+
+      const remaining = EDGE_LIMIT - edgeTime;
+      if (edgeTime <= 0.05) edgeEl.textContent = 'OK';
+      else edgeEl.textContent = remaining <= 0 ? 'DEAD' : remaining.toFixed(1) + 's';
+
+      if (edgeTime >= EDGE_LIMIT) {
+        setGameOver('Edge camping');
+      }
 
       // spawn
       spawnTimer += dt;
@@ -389,9 +409,16 @@
       // obstacles
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const o = obstacles[i];
+
+        // NEW: seekers drift toward ship
+        if (o.seeker) {
+          const dir = Math.sign(ship.x - o.x);
+          o.x += dir * o.steer * dt;
+          o.x = clamp(o.x, o.w/2 + 16, W - o.w/2 - 16);
+        }
+
         o.y += o.vy * dt;
 
-        // passed bottom => score
         if (o.y - o.h/2 > H + 20) {
           obstacles.splice(i, 1);
           score += 1;
@@ -400,21 +427,19 @@
           continue;
         }
 
-        if (collide(ship, o)) {
-          setGameOver();
+        if (!gameOver && collide(ship, o)) {
+          setGameOver('Hit');
           break;
         }
       }
     }
 
-    // Draw entities
     for (const o of obstacles) drawObstacle(o);
     drawShip();
     drawParticles(dt);
 
-    // overlays
     if (!running && !gameOver && !paused) {
-      drawOverlay('Swipe Dodger', 'Dodge the falling blocks.');
+      drawOverlay('Swipe Dodger', 'Now with seekers + edge penalty.');
     } else if (paused) {
       drawOverlay('Paused', 'Resume when ready.');
     } else if (gameOver) {
@@ -425,7 +450,6 @@
   }
   requestAnimationFrame(frame);
 
-  // ====== Controls ======
   startBtn.addEventListener('click', () => reset());
 
   pauseBtn.addEventListener('click', () => {
@@ -435,12 +459,9 @@
     pauseBtn.textContent = paused ? 'Resume' : 'Pause';
   });
 
-  // Pointer / touch: drag ship horizontally
   function pointerPosX(e) {
-    // map clientX to canvas coordinate system
     const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width * W;
-    return x;
+    return (e.clientX - rect.left) / rect.width * W;
   }
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -449,7 +470,6 @@
     pointerStartX = pointerPosX(e);
     shipStartX = ship.x;
 
-    // If game hasn't started yet, make a tap start it feel natural.
     if (!running && !gameOver && !paused) reset();
     if (gameOver) reset();
   });
@@ -464,7 +484,6 @@
   canvas.addEventListener('pointerup', () => { pointerDown = false; });
   canvas.addEventListener('pointercancel', () => { pointerDown = false; });
 
-  // Keyboard controls (works if you open on a computer, or iPad with keyboard)
   window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     if (k === 'arrowleft' || k === 'a') leftHeld = true;
@@ -486,7 +505,6 @@
     if (k === 'arrowright' || k === 'd') rightHeld = false;
   });
 
-  // Start in title screen state
   running = false;
   paused = false;
   gameOver = false;
