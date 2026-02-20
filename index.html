@@ -3,511 +3,693 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Swipe Dodger (Harder)</title>
+  <title>Procedural Dungeon Crawler (Single File)</title>
   <style>
-    :root { color-scheme: light dark; }
+    :root { color-scheme: dark; }
     html, body { height: 100%; margin: 0; }
-    body {
+    body{
       font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      display: grid;
-      place-items: center;
-      background: #0b0f17;
-      color: #e9eef7;
-      user-select: none;
-      -webkit-user-select: none;
-      -webkit-touch-callout: none;
-      touch-action: none;
+      background:#070a10;
+      color:#e9eef7;
+      display:grid;
+      place-items:center;
+      user-select:none;
+      -webkit-user-select:none;
+      touch-action: manipulation;
     }
-    .wrap { width: min(92vw, 520px); display: grid; gap: 12px; }
-    .topbar {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: baseline;
-      font-size: 14px;
-      opacity: 0.95;
-      flex-wrap: wrap;
+    .wrap{ width:min(94vw, 780px); display:grid; gap:10px; }
+    .top{
+      display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center;
+      font-size:14px;
     }
-    .pill {
+    .pill{
       background: rgba(255,255,255,0.08);
       border: 1px solid rgba(255,255,255,0.14);
       padding: 6px 10px;
       border-radius: 999px;
+      display:inline-flex; gap:8px; align-items:baseline;
+      white-space:nowrap;
     }
-    canvas {
-      width: 100%;
-      aspect-ratio: 3 / 4;
-      background: radial-gradient(1200px 800px at 50% 15%, rgba(120,160,255,0.20), transparent 55%),
-                  linear-gradient(180deg, #0b0f17, #070a10);
+    .pill strong{ font-weight:800; }
+    .row{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+    }
+    canvas{
+      width:100%;
+      aspect-ratio: 1 / 1;
+      background:
+        radial-gradient(1000px 800px at 50% 10%, rgba(110,140,255,0.18), transparent 60%),
+        linear-gradient(180deg, #070a10, #05070c);
       border-radius: 18px;
       border: 1px solid rgba(255,255,255,0.12);
       box-shadow: 0 18px 50px rgba(0,0,0,0.45);
-      display: block;
+      display:block;
     }
-    .controls { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
-    button {
-      appearance: none;
+    .controls{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+    }
+    button{
+      appearance:none;
       border: 1px solid rgba(255,255,255,0.18);
       background: rgba(255,255,255,0.08);
       color: inherit;
       border-radius: 14px;
       padding: 12px 14px;
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 700;
     }
-    button:active { transform: translateY(1px); }
-    .hint {
-      font-size: 13px;
-      opacity: 0.8;
-      line-height: 1.35;
-      padding: 0 2px;
+    button:active{ transform: translateY(1px); }
+    .hint{
+      font-size:13px; opacity:0.82; line-height:1.35; padding: 0 2px;
     }
-    .kbd {
+    .kbd{
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       padding: 1px 6px;
       border-radius: 8px;
       border: 1px solid rgba(255,255,255,0.16);
       background: rgba(255,255,255,0.06);
+      white-space:nowrap;
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="topbar">
-      <div class="pill">Score: <span id="score">0</span></div>
-      <div class="pill">Best: <span id="best">0</span></div>
-      <div class="pill">Level: <span id="level">1</span></div>
-      <div class="pill">Edge: <span id="edge">OK</span></div>
-    </div>
-
-    <canvas id="c" width="600" height="800" aria-label="Game canvas"></canvas>
-
-    <div class="controls">
-      <button id="startBtn">Start / Restart</button>
-      <button id="pauseBtn">Pause</button>
-    </div>
-
-    <div class="hint">
-      Dodge the falling blocks.<br/>
-      iPad: <span class="kbd">Swipe</span>/<span class="kbd">drag</span>. Keyboard: <span class="kbd">←</span>/<span class="kbd">→</span> or <span class="kbd">A</span>/<span class="kbd">D</span>.<br/>
-      New: camping the walls too long will end you.
-    </div>
+<div class="wrap">
+  <div class="top">
+    <div class="pill">Floor <strong id="floor">1</strong> · Seed <span id="seed">—</span></div>
+    <div class="pill">HP <strong id="hp">10</strong>/<span id="hpmax">10</span> · ATK <strong id="atk">2</strong> · Gold <strong id="gold">0</strong></div>
+    <div class="pill">Status <span id="status">Explore.</span></div>
   </div>
+
+  <div class="row">
+    <canvas id="c" width="900" height="900" aria-label="Dungeon canvas"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="newBtn">New Dungeon</button>
+    <button id="nextBtn">Next Floor</button>
+  </div>
+
+  <div class="hint">
+    Move: <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or <span class="kbd">←</span><span class="kbd">↑</span><span class="kbd">→</span><span class="kbd">↓</span>. iPad: swipe on the map.
+    <br/>Legend: <span class="kbd">@</span> you, <span class="kbd">E</span> enemy, <span class="kbd">♥</span> heal, <span class="kbd">$</span> gold, <span class="kbd">↧</span> stairs.
+  </div>
+</div>
 
 <script>
 (() => {
+  // ========= DOM =========
   const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d', { alpha: true });
-  const scoreEl = document.getElementById('score');
-  const bestEl  = document.getElementById('best');
-  const levelEl = document.getElementById('level');
-  const edgeEl  = document.getElementById('edge');
-  const startBtn = document.getElementById('startBtn');
-  const pauseBtn = document.getElementById('pauseBtn');
+  const ctx = canvas.getContext('2d');
+  const floorEl = document.getElementById('floor');
+  const seedEl = document.getElementById('seed');
+  const hpEl = document.getElementById('hp');
+  const hpMaxEl = document.getElementById('hpmax');
+  const atkEl = document.getElementById('atk');
+  const goldEl = document.getElementById('gold');
+  const statusEl = document.getElementById('status');
+  const newBtn = document.getElementById('newBtn');
+  const nextBtn = document.getElementById('nextBtn');
 
+  // ========= Helpers =========
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const rand  = (a, b) => a + Math.random() * (b - a);
+  const manhattan = (a,b) => Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
 
-  const BEST_KEY = 'swipeDodgerBest_v2_harder';
-  let best = Number(localStorage.getItem(BEST_KEY) || 0);
-  bestEl.textContent = String(best);
+  // Seeded RNG (Mulberry32)
+  function mulberry32(seed) {
+    let t = seed >>> 0;
+    return function() {
+      t += 0x6D2B79F5;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function makeSeed() {
+    // reasonably "random" without crypto
+    const s = (Date.now() ^ (Math.random()*1e9)|0) >>> 0;
+    return s || 123456789;
+  }
 
-  const W = canvas.width, H = canvas.height;
+  // ========= Game Config =========
+  const W = 35, H = 35;              // grid size
+  const ROOM_ATTEMPTS = 70;
+  const MIN_ROOM = 4, MAX_ROOM = 9;
+  const MAX_ENEMIES_BASE = 7;
+  const VIEW_RADIUS = 7;             // fog of war radius
 
-  const ship = {
-    w: 64, h: 36,
-    x: W/2, y: H - 90,
-    vx: 0,
-    speed: 760,
+  // Tile types
+  const T = {
+    WALL: 0,
+    FLOOR: 1
   };
 
-  let obstacles = [];
-  let particles = [];
+  // Items
+  const IT = {
+    NONE: 0,
+    GOLD: 1,
+    HEAL: 2,
+    STAIRS: 3
+  };
 
-  let running = false;
-  let paused = false;
-  let gameOver = false;
+  // ========= State =========
+  let rng = mulberry32(1);
+  let seed = 1;
+  let floor = 1;
 
-  let score = 0;
-  let level = 1;
+  let grid = [];        // tiles
+  let seen = [];        // fog-of-war memory
+  let items = [];       // item type per cell
+  let enemies = [];     // list of {x,y,hp,atk}
+  let player = { x: 1, y: 1, hp: 10, hpMax: 10, atk: 2, gold: 0 };
 
-  let spawnTimer = 0;
-  let spawnEvery = 0.82;
-  let obstacleSpeed = 270;
+  // Swipe controls
+  let touchStart = null;
 
-  // NEW: edge camping penalty
-  const EDGE_MARGIN = 85;       // how close counts as "edge"
-  const EDGE_LIMIT  = 1.9;      // seconds allowed at edge before death
-  let edgeTime = 0;             // accumulates while at edge
-
-  // input
-  let leftHeld = false, rightHeld = false;
-  let pointerDown = false;
-  let pointerStartX = 0;
-  let shipStartX = 0;
-
-  function roundedRect(x, y, w, h, r) {
-    r = Math.min(r, w/2, h/2);
-    ctx.beginPath();
-    ctx.moveTo(x+r, y);
-    ctx.arcTo(x+w, y, x+w, y+h, r);
-    ctx.arcTo(x+w, y+h, x, y+h, r);
-    ctx.arcTo(x, y+h, x, y, r);
-    ctx.arcTo(x, y, x+w, y, r);
-    ctx.closePath();
+  // ========= Generation =========
+  function initArrays() {
+    grid = Array.from({length: H}, () => Array(W).fill(T.WALL));
+    seen = Array.from({length: H}, () => Array(W).fill(false));
+    items = Array.from({length: H}, () => Array(W).fill(IT.NONE));
+    enemies = [];
   }
 
-  function drawShip() {
-    const x = ship.x - ship.w/2;
-    const y = ship.y - ship.h/2;
-
-    ctx.save();
-    ctx.shadowColor = 'rgba(120,160,255,0.6)';
-    ctx.shadowBlur = 18;
-    ctx.fillStyle = 'rgba(120,160,255,0.14)';
-    roundedRect(x-6, y-6, ship.w+12, ship.h+12, 18);
-    ctx.fill();
-    ctx.restore();
-
-    ctx.fillStyle = '#7aa2ff';
-    roundedRect(x, y, ship.w, ship.h, 16);
-    ctx.fill();
-
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    roundedRect(x + ship.w*0.58, y + ship.h*0.22, ship.w*0.30, ship.h*0.56, 12);
-    ctx.fill();
-
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    roundedRect(x + 8, y + ship.h*0.30, ship.w*0.16, ship.h*0.40, 10);
-    ctx.fill();
+  function randInt(a, b) { // inclusive
+    return a + Math.floor(rng() * (b - a + 1));
   }
 
-  function drawObstacle(o) {
-    ctx.save();
-    ctx.shadowColor = o.seeker ? 'rgba(255,180,80,0.55)' : 'rgba(255,80,100,0.45)';
-    ctx.shadowBlur = 14;
-    ctx.fillStyle = o.seeker ? '#ffb24f' : '#ff4f64';
-    roundedRect(o.x - o.w/2, o.y - o.h/2, o.w, o.h, 14);
-    ctx.fill();
-    ctx.restore();
-
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    roundedRect(o.x - o.w/2 + 8, o.y - o.h/2 + 10, o.w - 16, 10, 10);
-    ctx.fill();
-  }
-
-  function drawParticles(dt) {
-    for (let i = particles.length - 1; i >= 0; i--) {
-      const p = particles[i];
-      p.life -= dt;
-      if (p.life <= 0) { particles.splice(i, 1); continue; }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.vy += 600 * dt;
-      const a = clamp(p.life / p.maxLife, 0, 1);
-      ctx.globalAlpha = a;
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+  function carveRoom(x, y, w, h) {
+    for (let yy = y; yy < y + h; yy++) {
+      for (let xx = x; xx < x + w; xx++) {
+        if (xx<=0 || yy<=0 || xx>=W-1 || yy>=H-1) continue;
+        grid[yy][xx] = T.FLOOR;
+      }
     }
   }
 
-  function spawnExplosion(x, y) {
-    const n = 28;
-    for (let i = 0; i < n; i++) {
-      const ang = rand(0, Math.PI * 2);
-      const sp = rand(170, 560);
-      particles.push({
-        x, y,
-        vx: Math.cos(ang) * sp,
-        vy: Math.sin(ang) * sp - rand(0, 230),
-        r: rand(2.5, 6),
-        life: rand(0.35, 0.80),
-        maxLife: 0.80,
-        color: Math.random() < 0.65 ? 'rgba(255,80,100,0.95)' : 'rgba(255,255,255,0.85)',
+  function roomIntersects(r, rooms) {
+    for (const o of rooms) {
+      if (r.x <= o.x + o.w + 1 &&
+          r.x + r.w + 1 >= o.x &&
+          r.y <= o.y + o.h + 1 &&
+          r.y + r.h + 1 >= o.y) return true;
+    }
+    return false;
+  }
+
+  function carveCorridor(a, b) {
+    // L-shaped corridor
+    let x = a.x, y = a.y;
+    const horizFirst = rng() < 0.5;
+    function digTo(tx, ty) {
+      while (x !== tx) {
+        grid[y][x] = T.FLOOR;
+        x += Math.sign(tx - x);
+      }
+      while (y !== ty) {
+        grid[y][x] = T.FLOOR;
+        y += Math.sign(ty - y);
+      }
+      grid[y][x] = T.FLOOR;
+    }
+    if (horizFirst) {
+      digTo(b.x, a.y);
+      digTo(b.x, b.y);
+    } else {
+      digTo(a.x, b.y);
+      digTo(b.x, b.y);
+    }
+  }
+
+  function randomFloorCell() {
+    for (let tries = 0; tries < 5000; tries++) {
+      const x = randInt(1, W-2);
+      const y = randInt(1, H-2);
+      if (grid[y][x] === T.FLOOR && items[y][x] === IT.NONE && !enemyAt(x,y) && !(player.x===x && player.y===y)) {
+        return {x,y};
+      }
+    }
+    // fallback scan
+    for (let y=1;y<H-1;y++) for (let x=1;x<W-1;x++) {
+      if (grid[y][x]===T.FLOOR && items[y][x]===IT.NONE && !enemyAt(x,y) && !(player.x===x && player.y===y)) return {x,y};
+    }
+    return {x:1,y:1};
+  }
+
+  function enemyAt(x,y) {
+    return enemies.find(e => e.x===x && e.y===y) || null;
+  }
+
+  function generateDungeon(newSeed, keepProgression=false) {
+    seed = newSeed;
+    rng = mulberry32(seed + floor * 1013904223); // mix with floor
+    seedEl.textContent = String(seed >>> 0);
+
+    initArrays();
+
+    // rooms
+    const rooms = [];
+    for (let i = 0; i < ROOM_ATTEMPTS; i++) {
+      const w = randInt(MIN_ROOM, MAX_ROOM);
+      const h = randInt(MIN_ROOM, MAX_ROOM);
+      const x = randInt(1, W - w - 2);
+      const y = randInt(1, H - h - 2);
+      const r = {x,y,w,h, cx: x + (w>>1), cy: y + (h>>1)};
+      if (!roomIntersects(r, rooms)) {
+        carveRoom(x,y,w,h);
+        if (rooms.length > 0) {
+          const prev = rooms[rooms.length-1];
+          carveCorridor({x: prev.cx, y: prev.cy}, {x: r.cx, y: r.cy});
+        }
+        rooms.push(r);
+      }
+    }
+
+    if (rooms.length === 0) {
+      // ultra fallback
+      carveRoom(2,2, W-4, H-4);
+      rooms.push({x:2,y:2,w:W-4,h:H-4,cx:W>>1,cy:H>>1});
+    }
+
+    // place player at center of first room
+    player.x = rooms[0].cx;
+    player.y = rooms[0].cy;
+
+    // place stairs far from player
+    let stairs = null;
+    let bestDist = -1;
+    for (const r of rooms) {
+      const candidate = {x:r.cx, y:r.cy};
+      const d = manhattan(candidate, player);
+      if (d > bestDist) { bestDist = d; stairs = candidate; }
+    }
+    items[stairs.y][stairs.x] = IT.STAIRS;
+
+    // enemies (scale with floor)
+    const enemyCount = clamp(Math.floor(MAX_ENEMIES_BASE + floor*1.2 + rng()*3), 6, 22);
+    for (let i=0;i<enemyCount;i++) {
+      const p = randomFloorCell();
+      // keep enemies not too close to start
+      if (manhattan(p, player) < 6) { i--; continue; }
+      enemies.push({
+        x:p.x, y:p.y,
+        hp: 3 + Math.floor(floor*0.6) + randInt(0,2),
+        atk: 1 + Math.floor(floor*0.25)
       });
     }
+
+    // items
+    const goldCount = clamp(8 + Math.floor(floor*1.4), 8, 30);
+    const healCount = clamp(5 + Math.floor(floor*0.7), 4, 18);
+
+    for (let i=0;i<goldCount;i++) {
+      const p = randomFloorCell();
+      items[p.y][p.x] = IT.GOLD;
+    }
+    for (let i=0;i<healCount;i++) {
+      const p = randomFloorCell();
+      items[p.y][p.x] = IT.HEAL;
+    }
+
+    // reset fog
+    for (let y=0;y<H;y++) for (let x=0;x<W;x++) seen[y][x]=false;
+
+    status(`Floor ${floor}. Explore.`);
+    syncUI();
+    draw();
   }
 
-  function reset() {
-    obstacles = [];
-    particles = [];
-    score = 0;
-    level = 1;
-    spawnTimer = 0;
-    spawnEvery = 0.82;
-    obstacleSpeed = 270;
-
-    ship.x = W/2;
-    ship.vx = 0;
-
-    edgeTime = 0;
-    edgeEl.textContent = 'OK';
-
-    running = true;
-    paused = false;
-    gameOver = false;
-
-    scoreEl.textContent = '0';
-    levelEl.textContent = '1';
-    pauseBtn.textContent = 'Pause';
+  // ========= Gameplay =========
+  function status(msg) {
+    statusEl.textContent = msg;
   }
 
-  function spawnObstacle() {
-    const w = rand(54, 92);
-    const h = rand(48, 86);
-
-    // Slight bias away from dead-center to reduce "one perfect lane"
-    const bias = (Math.random() < 0.5) ? -1 : 1;
-    const base = W/2 + bias * rand(40, 160);
-    const x = clamp(base + rand(-80, 80), w/2 + 16, W - w/2 - 16);
-    const y = -h;
-
-    let speed = obstacleSpeed * rand(0.95, 1.30);
-    let ww = w, hh = h;
-
-    // NEW: seeker chance increases with level (capped)
-    const seekerChance = clamp(0.10 + (level - 1) * 0.02, 0.10, 0.28);
-    const seeker = Math.random() < seekerChance;
-
-    // Variety
-    const kind = Math.random();
-    if (kind < 0.14) { ww = rand(44, 60); hh = rand(70, 120); speed *= 1.18; }
-    else if (kind > 0.86) { ww = rand(86, 120); hh = rand(44, 64); speed *= 0.98; }
-
-    // Seeker lateral drift strength
-    const steer = seeker ? (170 + (level - 1) * 10) : 0;
-
-    obstacles.push({ x, y, w: ww, h: hh, vy: speed, seeker, steer });
+  function syncUI() {
+    floorEl.textContent = String(floor);
+    hpEl.textContent = String(player.hp);
+    hpMaxEl.textContent = String(player.hpMax);
+    atkEl.textContent = String(player.atk);
+    goldEl.textContent = String(player.gold);
   }
 
-  function updateDifficulty() {
-    const newLevel = 1 + Math.floor(score / 10);
-    if (newLevel !== level) {
-      level = newLevel;
-      levelEl.textContent = String(level);
+  function passable(x,y) {
+    return x>=0 && y>=0 && x<W && y<H && grid[y][x] === T.FLOOR;
+  }
 
-      spawnEvery = clamp(0.82 - (level - 1) * 0.06, 0.34, 0.82);
-      obstacleSpeed = 270 + (level - 1) * 26;
+  function reveal() {
+    for (let dy=-VIEW_RADIUS; dy<=VIEW_RADIUS; dy++) {
+      for (let dx=-VIEW_RADIUS; dx<=VIEW_RADIUS; dx++) {
+        const x = player.x + dx, y = player.y + dy;
+        if (x<0||y<0||x>=W||y>=H) continue;
+        if (dx*dx + dy*dy <= VIEW_RADIUS*VIEW_RADIUS) seen[y][x]=true;
+      }
     }
   }
 
-  function collide(a, b) {
-    const ax1 = a.x - a.w/2, ax2 = a.x + a.w/2;
-    const ay1 = a.y - a.h/2, ay2 = a.y + a.h/2;
-    const bx1 = b.x - b.w/2, bx2 = b.x + b.w/2;
-    const by1 = b.y - b.h/2, by2 = b.y + b.h/2;
-    return ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1;
+  function pickUp() {
+    const it = items[player.y][player.x];
+    if (it === IT.NONE) return;
+
+    if (it === IT.GOLD) {
+      const g = 1 + Math.floor(rng()*3) + Math.floor(floor*0.25);
+      player.gold += g;
+      items[player.y][player.x] = IT.NONE;
+      status(`Picked up ${g} gold.`);
+    } else if (it === IT.HEAL) {
+      const heal = 3 + Math.floor(rng()*4) + Math.floor(floor*0.15);
+      const before = player.hp;
+      player.hp = clamp(player.hp + heal, 0, player.hpMax);
+      items[player.y][player.x] = IT.NONE;
+      status(before === player.hp ? `Heal wasted (already full).` : `Healed +${player.hp - before}.`);
+    } else if (it === IT.STAIRS) {
+      status(`Stairs found. Tap “Next Floor” or press Enter.`);
+    }
   }
 
-  function setGameOver(reasonText) {
-    gameOver = true;
-    running = false;
-    spawnExplosion(ship.x, ship.y);
+  function attack(attacker, defender) {
+    // small randomness
+    const roll = (base) => Math.max(1, base + (rng()<0.5 ? 0 : 1) - (rng()<0.2 ? 1 : 0));
+    const dmg = roll(attacker.atk);
+    defender.hp -= dmg;
+    return dmg;
+  }
 
-    if (score > best) {
-      best = score;
-      localStorage.setItem(BEST_KEY, String(best));
-      bestEl.textContent = String(best);
+  function playerMove(dx, dy) {
+    const nx = player.x + dx, ny = player.y + dy;
+    if (!passable(nx, ny)) { status("Bump."); return; }
+
+    const e = enemyAt(nx, ny);
+    if (e) {
+      // combat (player hits, then enemy hits if alive)
+      const dmg = attack({atk: player.atk}, e);
+      if (e.hp <= 0) {
+        enemies = enemies.filter(x => x !== e);
+        player.x = nx; player.y = ny;
+        player.gold += 1; // small reward
+        status(`You hit for ${dmg}. Enemy defeated (+1 gold).`);
+        pickUp();
+      } else {
+        const ret = attack(e, player);
+        status(`You hit for ${dmg}. Enemy hits for ${ret}.`);
+      }
+      if (player.hp <= 0) {
+        gameOver();
+        return;
+      }
+    } else {
+      player.x = nx; player.y = ny;
+      pickUp();
+      status("Move.");
     }
 
-    if (reasonText) edgeEl.textContent = reasonText;
+    // enemy turn after successful action (move or attack)
+    enemyTurn();
+    reveal();
+    syncUI();
+    draw();
   }
 
-  function drawBackground() {
-    // edge danger zones (subtle red glow)
-    const warn = clamp(edgeTime / EDGE_LIMIT, 0, 1);
+  function enemyTurn() {
+    // simple "smell" AI: if close, step toward player, else random drift
+    for (const e of enemies) {
+      if (player.hp <= 0) break;
 
-    if (warn > 0) {
-      ctx.save();
-      ctx.globalAlpha = 0.25 * warn;
-      ctx.fillStyle = '#ff4f64';
-      ctx.fillRect(0, 0, EDGE_MARGIN, H);
-      ctx.fillRect(W - EDGE_MARGIN, 0, EDGE_MARGIN, H);
-      ctx.restore();
-    }
-
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    for (let i = 0; i < 42; i++) {
-      const x = (i * 97) % W;
-      const y = ((i * 211) % H);
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.fillRect(x, y, 2, 2);
-    }
-    ctx.restore();
-
-    ctx.save();
-    ctx.globalAlpha = 0.18;
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.setLineDash([10, 10]);
-    ctx.beginPath();
-    ctx.moveTo(22, ship.y - 10);
-    ctx.lineTo(W - 22, ship.y - 10);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawOverlay(text1, text2) {
-    ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    roundedRect(30, 250, W - 60, 300, 22);
-    ctx.fill();
-
-    ctx.fillStyle = '#e9eef7';
-    ctx.textAlign = 'center';
-    ctx.font = '700 44px -apple-system, system-ui, sans-serif';
-    ctx.fillText(text1, W/2, 350);
-
-    ctx.globalAlpha = 0.92;
-    ctx.font = '500 18px -apple-system, system-ui, sans-serif';
-    ctx.fillText(text2, W/2, 402);
-
-    ctx.globalAlpha = 0.85;
-    ctx.font = '500 16px -apple-system, system-ui, sans-serif';
-    ctx.fillText('Tap Start / Restart', W/2, 455);
-    ctx.restore();
-  }
-
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min(0.033, (now - last) / 1000);
-    last = now;
-
-    ctx.clearRect(0, 0, W, H);
-    drawBackground();
-
-    if (running && !paused) {
-      const target = (rightHeld ? 1 : 0) - (leftHeld ? 1 : 0);
-      ship.vx = target * ship.speed;
-
-      ship.x += ship.vx * dt;
-      ship.x = clamp(ship.x, ship.w/2 + 14, W - ship.w/2 - 14);
-
-      // NEW: edge timer
-      const atEdge = (ship.x < EDGE_MARGIN) || (ship.x > W - EDGE_MARGIN);
-      if (atEdge) edgeTime += dt;
-      else edgeTime = Math.max(0, edgeTime - dt * 1.4); // recover faster than you build up
-
-      const remaining = EDGE_LIMIT - edgeTime;
-      if (edgeTime <= 0.05) edgeEl.textContent = 'OK';
-      else edgeEl.textContent = remaining <= 0 ? 'DEAD' : remaining.toFixed(1) + 's';
-
-      if (edgeTime >= EDGE_LIMIT) {
-        setGameOver('Edge camping');
+      const d = manhattan(e, player);
+      if (d === 1) {
+        const dmg = attack(e, player);
+        status(`Enemy hits for ${dmg}.`);
+        if (player.hp <= 0) { gameOver(); return; }
+        continue;
       }
 
-      // spawn
-      spawnTimer += dt;
-      while (spawnTimer >= spawnEvery) {
-        spawnTimer -= spawnEvery;
-        spawnObstacle();
+      let dx = 0, dy = 0;
+      if (d <= 7 && rng() < 0.85) {
+        // pursue
+        if (Math.abs(player.x - e.x) > Math.abs(player.y - e.y)) dx = Math.sign(player.x - e.x);
+        else dy = Math.sign(player.y - e.y);
+        // occasionally try the other axis
+        if (rng() < 0.25) { [dx,dy] = [dy,dx]; }
+      } else {
+        // wander
+        const r = randInt(0,3);
+        dx = [1,-1,0,0][r];
+        dy = [0,0,1,-1][r];
       }
 
-      // obstacles
-      for (let i = obstacles.length - 1; i >= 0; i--) {
-        const o = obstacles[i];
+      const nx = e.x + dx, ny = e.y + dy;
+      if (nx===player.x && ny===player.y) continue;
+      if (!passable(nx, ny)) continue;
+      if (enemyAt(nx, ny)) continue;
+      // don't step onto stairs to avoid annoyance
+      if (items[ny][nx] === IT.STAIRS) continue;
 
-        // NEW: seekers drift toward ship
-        if (o.seeker) {
-          const dir = Math.sign(ship.x - o.x);
-          o.x += dir * o.steer * dt;
-          o.x = clamp(o.x, o.w/2 + 16, W - o.w/2 - 16);
-        }
+      e.x = nx; e.y = ny;
+    }
+  }
 
-        o.y += o.vy * dt;
+  function gameOver() {
+    status(`You died on floor ${floor}. Tap “New Dungeon”.`);
+    // soft reset player stats but keep best run? For simplicity: reset everything.
+    // (If you want a roguelike "meta-progression", we can add it.)
+    draw(true);
+  }
 
-        if (o.y - o.h/2 > H + 20) {
-          obstacles.splice(i, 1);
-          score += 1;
-          scoreEl.textContent = String(score);
-          updateDifficulty();
+  function nextFloor() {
+    if (items[player.y][player.x] !== IT.STAIRS) {
+      status("You need to stand on the stairs (↧).");
+      return;
+    }
+    floor += 1;
+    // progression
+    if (floor % 2 === 0) { player.hpMax += 2; player.atk += 1; }
+    player.hp = player.hpMax;
+    status(`Descending…`);
+    floorEl.textContent = String(floor);
+    generateDungeon(seed, true);
+  }
+
+  // ========= Rendering =========
+  function draw(dead=false) {
+    const cw = canvas.width, ch = canvas.height;
+    const cell = Math.floor(Math.min(cw / W, ch / H));
+    const ox = Math.floor((cw - cell * W) / 2);
+    const oy = Math.floor((ch - cell * H) / 2);
+
+    ctx.clearRect(0,0,cw,ch);
+
+    // background vignette
+    ctx.save();
+    const g = ctx.createRadialGradient(cw/2, ch*0.2, 50, cw/2, ch/2, cw*0.65);
+    g.addColorStop(0, 'rgba(120,160,255,0.12)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,cw,ch);
+    ctx.restore();
+
+    reveal();
+
+    // tiles
+    for (let y=0;y<H;y++) {
+      for (let x=0;x<W;x++) {
+        const vis = seen[y][x];
+        const px = ox + x*cell, py = oy + y*cell;
+
+        if (!vis) {
+          ctx.fillStyle = 'rgba(0,0,0,0.88)';
+          ctx.fillRect(px, py, cell, cell);
           continue;
         }
 
-        if (!gameOver && collide(ship, o)) {
-          setGameOver('Hit');
-          break;
+        if (grid[y][x] === T.WALL) {
+          ctx.fillStyle = 'rgba(255,255,255,0.06)';
+          ctx.fillRect(px, py, cell, cell);
+        } else {
+          ctx.fillStyle = 'rgba(255,255,255,0.02)';
+          ctx.fillRect(px, py, cell, cell);
         }
       }
     }
 
-    for (const o of obstacles) drawObstacle(o);
-    drawShip();
-    drawParticles(dt);
+    // subtle grid lines (only on seen)
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.strokeStyle = '#ffffff';
+    for (let y=0;y<=H;y++) {
+      const py = oy + y*cell;
+      ctx.beginPath();
+      ctx.moveTo(ox, py);
+      ctx.lineTo(ox + W*cell, py);
+      ctx.stroke();
+    }
+    for (let x=0;x<=W;x++) {
+      const px = ox + x*cell;
+      ctx.beginPath();
+      ctx.moveTo(px, oy);
+      ctx.lineTo(px, oy + H*cell);
+      ctx.stroke();
+    }
+    ctx.restore();
 
-    if (!running && !gameOver && !paused) {
-      drawOverlay('Swipe Dodger', 'Now with seekers + edge penalty.');
-    } else if (paused) {
-      drawOverlay('Paused', 'Resume when ready.');
-    } else if (gameOver) {
-      drawOverlay('Game Over', `Final score: ${score}`);
+    // items
+    for (let y=0;y<H;y++) {
+      for (let x=0;x<W;x++) {
+        if (!seen[y][x]) continue;
+        if (grid[y][x] !== T.FLOOR) continue;
+        const it = items[y][x];
+        if (it === IT.NONE) continue;
+
+        const cx = ox + x*cell + cell/2;
+        const cy = oy + y*cell + cell/2;
+
+        ctx.save();
+        if (it === IT.GOLD) {
+          ctx.fillStyle = 'rgba(255,220,120,0.95)';
+          ctx.shadowColor = 'rgba(255,220,120,0.35)';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.arc(cx, cy, cell*0.18, 0, Math.PI*2);
+          ctx.fill();
+        } else if (it === IT.HEAL) {
+          ctx.fillStyle = 'rgba(120,255,180,0.95)';
+          ctx.shadowColor = 'rgba(120,255,180,0.35)';
+          ctx.shadowBlur = 10;
+          ctx.fillRect(cx - cell*0.07, cy - cell*0.22, cell*0.14, cell*0.44);
+          ctx.fillRect(cx - cell*0.22, cy - cell*0.07, cell*0.44, cell*0.14);
+        } else if (it === IT.STAIRS) {
+          ctx.strokeStyle = 'rgba(190,200,255,0.95)';
+          ctx.shadowColor = 'rgba(190,200,255,0.35)';
+          ctx.shadowBlur = 10;
+          ctx.lineWidth = Math.max(2, cell*0.08);
+          ctx.beginPath();
+          ctx.moveTo(cx - cell*0.18, cy - cell*0.10);
+          ctx.lineTo(cx, cy + cell*0.18);
+          ctx.lineTo(cx + cell*0.18, cy - cell*0.10);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
     }
 
-    requestAnimationFrame(frame);
+    // enemies
+    for (const e of enemies) {
+      if (!seen[e.y][e.x]) continue;
+      const cx = ox + e.x*cell + cell/2;
+      const cy = oy + e.y*cell + cell/2;
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,90,110,0.95)';
+      ctx.shadowColor = 'rgba(255,90,110,0.35)';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, cell*0.26, 0, Math.PI*2);
+      ctx.fill();
+
+      // tiny HP pip
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(cx - cell*0.22, cy + cell*0.30, cell*0.44, cell*0.10);
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      const pct = clamp(e.hp / (3 + Math.floor(floor*0.6) + 2), 0, 1);
+      ctx.fillRect(cx - cell*0.22, cy + cell*0.30, cell*0.44*pct, cell*0.10);
+      ctx.restore();
+    }
+
+    // player
+    const pcx = ox + player.x*cell + cell/2;
+    const pcy = oy + player.y*cell + cell/2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(120,160,255,0.55)';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = dead ? 'rgba(160,160,160,0.8)' : 'rgba(120,160,255,0.95)';
+    ctx.beginPath();
+    ctx.arc(pcx, pcy, cell*0.28, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // crosshair / focus ring
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = Math.max(1, cell*0.05);
+    ctx.beginPath();
+    ctx.arc(pcx, pcy, cell*0.42, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+
+    // overlay if dead
+    if (player.hp <= 0) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(0,0,cw,ch);
+      ctx.fillStyle = '#e9eef7';
+      ctx.textAlign = 'center';
+      ctx.font = '800 52px -apple-system, system-ui, sans-serif';
+      ctx.fillText('You Died', cw/2, ch/2 - 10);
+      ctx.globalAlpha = 0.9;
+      ctx.font = '500 18px -apple-system, system-ui, sans-serif';
+      ctx.fillText('Tap New Dungeon to try again', cw/2, ch/2 + 34);
+      ctx.restore();
+    }
   }
-  requestAnimationFrame(frame);
 
-  startBtn.addEventListener('click', () => reset());
+  // ========= Input =========
+  function handleKey(e) {
+    const k = e.key.toLowerCase();
+    if (player.hp <= 0) return;
 
-  pauseBtn.addEventListener('click', () => {
-    if (!running && !gameOver) return;
-    if (gameOver) return;
-    paused = !paused;
-    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+    if (k === 'arrowup' || k === 'w') playerMove(0,-1);
+    else if (k === 'arrowdown' || k === 's') playerMove(0, 1);
+    else if (k === 'arrowleft' || k === 'a') playerMove(-1,0);
+    else if (k === 'arrowright' || k === 'd') playerMove(1, 0);
+    else if (k === 'enter') nextFloor();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    const keys = ['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d','enter'];
+    if (keys.includes(e.key.toLowerCase())) e.preventDefault();
+    handleKey(e);
   });
-
-  function pointerPosX(e) {
-    const rect = canvas.getBoundingClientRect();
-    return (e.clientX - rect.left) / rect.width * W;
-  }
 
   canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
-    pointerDown = true;
-    pointerStartX = pointerPosX(e);
-    shipStartX = ship.x;
-
-    if (!running && !gameOver && !paused) reset();
-    if (gameOver) reset();
+    touchStart = { x: e.clientX, y: e.clientY, t: performance.now() };
   });
 
-  canvas.addEventListener('pointermove', (e) => {
-    if (!pointerDown) return;
-    const x = pointerPosX(e);
-    const dx = x - pointerStartX;
-    ship.x = clamp(shipStartX + dx, ship.w/2 + 14, W - ship.w/2 - 14);
+  canvas.addEventListener('pointerup', (e) => {
+    if (!touchStart || player.hp <= 0) { touchStart = null; return; }
+    const dx = e.clientX - touchStart.x;
+    const dy = e.clientY - touchStart.y;
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+
+    // small swipe threshold
+    const TH = 22;
+    if (adx < TH && ady < TH) { touchStart = null; return; }
+
+    if (adx > ady) playerMove(Math.sign(dx), 0);
+    else playerMove(0, Math.sign(dy));
+
+    touchStart = null;
   });
 
-  canvas.addEventListener('pointerup', () => { pointerDown = false; });
-  canvas.addEventListener('pointercancel', () => { pointerDown = false; });
-
-  window.addEventListener('keydown', (e) => {
-    const k = e.key.toLowerCase();
-    if (k === 'arrowleft' || k === 'a') leftHeld = true;
-    if (k === 'arrowright' || k === 'd') rightHeld = true;
-
-    if (k === ' ' || k === 'enter') {
-      if (!running || gameOver) reset();
-      else {
-        paused = !paused;
-        pauseBtn.textContent = paused ? 'Resume' : 'Pause';
-      }
-      e.preventDefault();
-    }
+  // Buttons
+  newBtn.addEventListener('click', () => {
+    floor = 1;
+    player = { x: 1, y: 1, hp: 10, hpMax: 10, atk: 2, gold: 0 };
+    generateDungeon(makeSeed());
   });
 
-  window.addEventListener('keyup', (e) => {
-    const k = e.key.toLowerCase();
-    if (k === 'arrowleft' || k === 'a') leftHeld = false;
-    if (k === 'arrowright' || k === 'd') rightHeld = false;
-  });
+  nextBtn.addEventListener('click', () => nextFloor());
 
-  running = false;
-  paused = false;
-  gameOver = false;
+  // ========= Start =========
+  function start() {
+    floor = 1;
+    player = { x: 1, y: 1, hp: 10, hpMax: 10, atk: 2, gold: 0 };
+    generateDungeon(makeSeed());
+  }
+
+  start();
 })();
 </script>
 </body>
