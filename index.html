@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Procedural Dungeon Crawler (Single File)</title>
+  <title>Spellpaint Arena (Single File)</title>
   <style>
     :root { color-scheme: dark; }
     html, body { height: 100%; margin: 0; }
     body{
       font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      background:#070a10;
+      background:#060810;
       color:#e9eef7;
       display:grid;
       place-items:center;
       user-select:none;
       -webkit-user-select:none;
-      touch-action: manipulation;
+      -webkit-touch-callout:none;
+      touch-action:none;
     }
-    .wrap{ width:min(94vw, 780px); display:grid; gap:10px; }
+    .wrap{ width:min(94vw, 760px); display:grid; gap:10px; }
     .top{
       display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center;
       font-size:14px;
@@ -31,17 +32,13 @@
       white-space:nowrap;
     }
     .pill strong{ font-weight:800; }
-    .row{
-      display:grid;
-      grid-template-columns: 1fr;
-      gap:10px;
-    }
     canvas{
       width:100%;
-      aspect-ratio: 1 / 1;
+      aspect-ratio: 16 / 10;
       background:
-        radial-gradient(1000px 800px at 50% 10%, rgba(110,140,255,0.18), transparent 60%),
-        linear-gradient(180deg, #070a10, #05070c);
+        radial-gradient(1200px 900px at 50% 10%, rgba(120,160,255,0.18), transparent 60%),
+        radial-gradient(1000px 800px at 20% 80%, rgba(255,120,210,0.08), transparent 60%),
+        linear-gradient(180deg, #060810, #04050a);
       border-radius: 18px;
       border: 1px solid rgba(255,255,255,0.12);
       box-shadow: 0 18px 50px rgba(0,0,0,0.45);
@@ -49,7 +46,7 @@
     }
     .controls{
       display:grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap:10px;
     }
     button{
@@ -60,7 +57,7 @@
       border-radius: 14px;
       padding: 12px 14px;
       font-size: 16px;
-      font-weight: 700;
+      font-weight: 800;
     }
     button:active{ transform: translateY(1px); }
     .hint{
@@ -79,617 +76,681 @@
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="pill">Floor <strong id="floor">1</strong> · Seed <span id="seed">—</span></div>
-    <div class="pill">HP <strong id="hp">10</strong>/<span id="hpmax">10</span> · ATK <strong id="atk">2</strong> · Gold <strong id="gold">0</strong></div>
-    <div class="pill">Status <span id="status">Explore.</span></div>
+    <div class="pill">Score <strong id="score">0</strong> · Best <strong id="best">0</strong></div>
+    <div class="pill">HP <strong id="hp">10</strong>/<span id="hpmax">10</span> · Wave <strong id="wave">1</strong></div>
+    <div class="pill">Status <span id="status">Drag to cast.</span></div>
   </div>
 
-  <div class="row">
-    <canvas id="c" width="900" height="900" aria-label="Dungeon canvas"></canvas>
-  </div>
+  <canvas id="c" width="1280" height="800" aria-label="Spellpaint Arena"></canvas>
 
   <div class="controls">
-    <button id="newBtn">New Dungeon</button>
-    <button id="nextBtn">Next Floor</button>
+    <button id="startBtn">Start / Restart</button>
+    <button id="pauseBtn">Pause</button>
+    <button id="modeBtn">Spell: Vortex</button>
   </div>
 
   <div class="hint">
-    Move: <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or <span class="kbd">←</span><span class="kbd">↑</span><span class="kbd">→</span><span class="kbd">↓</span>. iPad: swipe on the map.
-    <br/>Legend: <span class="kbd">@</span> you, <span class="kbd">E</span> enemy, <span class="kbd">♥</span> heal, <span class="kbd">$</span> gold, <span class="kbd">↧</span> stairs.
+    iPad: <span class="kbd">drag</span> to cast. Desktop: hold mouse and move. Enemies chase you. Paint them.
+    <br/>Tip: stay moving — if they touch you, you take damage.
   </div>
 </div>
 
 <script>
 (() => {
-  // ========= DOM =========
+  // ===== DOM =====
   const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const floorEl = document.getElementById('floor');
-  const seedEl = document.getElementById('seed');
-  const hpEl = document.getElementById('hp');
+  const ctx = canvas.getContext('2d', { alpha: true });
+  const scoreEl = document.getElementById('score');
+  const bestEl  = document.getElementById('best');
+  const hpEl    = document.getElementById('hp');
   const hpMaxEl = document.getElementById('hpmax');
-  const atkEl = document.getElementById('atk');
-  const goldEl = document.getElementById('gold');
-  const statusEl = document.getElementById('status');
-  const newBtn = document.getElementById('newBtn');
-  const nextBtn = document.getElementById('nextBtn');
+  const waveEl  = document.getElementById('wave');
+  const statusEl= document.getElementById('status');
+  const startBtn= document.getElementById('startBtn');
+  const pauseBtn= document.getElementById('pauseBtn');
+  const modeBtn = document.getElementById('modeBtn');
 
-  // ========= Helpers =========
+  // ===== Helpers =====
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const manhattan = (a,b) => Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
+  const rand = (a,b) => a + Math.random()*(b-a);
+  const hypot = Math.hypot;
 
-  // Seeded RNG (Mulberry32)
-  function mulberry32(seed) {
-    let t = seed >>> 0;
-    return function() {
-      t += 0x6D2B79F5;
-      let r = Math.imul(t ^ (t >>> 15), 1 | t);
-      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  function makeSeed() {
-    // reasonably "random" without crypto
-    const s = (Date.now() ^ (Math.random()*1e9)|0) >>> 0;
-    return s || 123456789;
-  }
+  // ===== Storage =====
+  const BEST_KEY = 'spellpaint_arena_best_v1';
+  let best = Number(localStorage.getItem(BEST_KEY) || 0);
+  bestEl.textContent = String(best);
 
-  // ========= Game Config =========
-  const W = 35, H = 35;              // grid size
-  const ROOM_ATTEMPTS = 70;
-  const MIN_ROOM = 4, MAX_ROOM = 9;
-  const MAX_ENEMIES_BASE = 7;
-  const VIEW_RADIUS = 7;             // fog of war radius
+  // ===== World =====
+  const W = canvas.width, H = canvas.height;
 
-  // Tile types
-  const T = {
-    WALL: 0,
-    FLOOR: 1
+  let running = false;
+  let paused = false;
+  let gameOver = false;
+
+  let score = 0;
+  let wave = 1;
+
+  const player = {
+    x: W*0.5, y: H*0.58,
+    r: 16,
+    hp: 10, hpMax: 10,
+    speed: 520, // px/sec
+    vx: 0, vy: 0,
+    invuln: 0
   };
 
-  // Items
-  const IT = {
-    NONE: 0,
-    GOLD: 1,
-    HEAL: 2,
-    STAIRS: 3
+  // input
+  let pointerDown = false;
+  let pointerId = null;
+  let pointerX = player.x, pointerY = player.y;
+  let lastPointerX = player.x, lastPointerY = player.y;
+
+  // spell brush (particle-fluid-ish)
+  let spells = [];     // particles that deal damage
+  let sparks = [];     // visuals
+  let enemies = [];    // {x,y,r,hp,speed,touchCd}
+  let blobs = [];      // background drifting glow blobs
+
+  let spawnTimer = 0;
+  let spawnEvery = 0.85;
+  let enemyBaseHP = 5;
+  let enemyBaseSpeed = 95;
+
+  // spell modes
+  const SpellMode = {
+    VORTEX: 0,
+    RAY: 1,
+    NOVA: 2
   };
+  let spellMode = SpellMode.VORTEX;
 
-  // ========= State =========
-  let rng = mulberry32(1);
-  let seed = 1;
-  let floor = 1;
+  function setStatus(s){ statusEl.textContent = s; }
 
-  let grid = [];        // tiles
-  let seen = [];        // fog-of-war memory
-  let items = [];       // item type per cell
-  let enemies = [];     // list of {x,y,hp,atk}
-  let player = { x: 1, y: 1, hp: 10, hpMax: 10, atk: 2, gold: 0 };
+  function syncUI(){
+    scoreEl.textContent = String(score);
+    hpEl.textContent = String(Math.max(0, Math.ceil(player.hp)));
+    hpMaxEl.textContent = String(player.hpMax);
+    waveEl.textContent = String(wave);
+    bestEl.textContent = String(best);
+  }
 
-  // Swipe controls
-  let touchStart = null;
+  function reset() {
+    running = true;
+    paused = false;
+    gameOver = false;
 
-  // ========= Generation =========
-  function initArrays() {
-    grid = Array.from({length: H}, () => Array(W).fill(T.WALL));
-    seen = Array.from({length: H}, () => Array(W).fill(false));
-    items = Array.from({length: H}, () => Array(W).fill(IT.NONE));
+    score = 0;
+    wave = 1;
+
+    player.x = W*0.5; player.y = H*0.58;
+    player.vx = 0; player.vy = 0;
+    player.hpMax = 10; player.hp = 10;
+    player.invuln = 0;
+
+    spells = [];
+    sparks = [];
     enemies = [];
+    blobs = makeBlobs(10);
+
+    spawnTimer = 0;
+    spawnEvery = 0.85;
+    enemyBaseHP = 5;
+    enemyBaseSpeed = 95;
+
+    pauseBtn.textContent = 'Pause';
+    setStatus('Drag to cast.');
+    syncUI();
   }
 
-  function randInt(a, b) { // inclusive
-    return a + Math.floor(rng() * (b - a + 1));
-  }
+  function gameOverNow() {
+    gameOver = true;
+    running = false;
+    paused = false;
 
-  function carveRoom(x, y, w, h) {
-    for (let yy = y; yy < y + h; yy++) {
-      for (let xx = x; xx < x + w; xx++) {
-        if (xx<=0 || yy<=0 || xx>=W-1 || yy>=H-1) continue;
-        grid[yy][xx] = T.FLOOR;
-      }
+    if (score > best) {
+      best = score;
+      localStorage.setItem(BEST_KEY, String(best));
     }
-  }
+    setStatus('Game over. Restart?');
+    syncUI();
 
-  function roomIntersects(r, rooms) {
-    for (const o of rooms) {
-      if (r.x <= o.x + o.w + 1 &&
-          r.x + r.w + 1 >= o.x &&
-          r.y <= o.y + o.h + 1 &&
-          r.y + r.h + 1 >= o.y) return true;
-    }
-    return false;
-  }
-
-  function carveCorridor(a, b) {
-    // L-shaped corridor
-    let x = a.x, y = a.y;
-    const horizFirst = rng() < 0.5;
-    function digTo(tx, ty) {
-      while (x !== tx) {
-        grid[y][x] = T.FLOOR;
-        x += Math.sign(tx - x);
-      }
-      while (y !== ty) {
-        grid[y][x] = T.FLOOR;
-        y += Math.sign(ty - y);
-      }
-      grid[y][x] = T.FLOOR;
-    }
-    if (horizFirst) {
-      digTo(b.x, a.y);
-      digTo(b.x, b.y);
-    } else {
-      digTo(a.x, b.y);
-      digTo(b.x, b.y);
+    // burst
+    for (let i=0;i<90;i++) {
+      sparks.push(makeSpark(player.x, player.y, 1.0, true));
     }
   }
 
-  function randomFloorCell() {
-    for (let tries = 0; tries < 5000; tries++) {
-      const x = randInt(1, W-2);
-      const y = randInt(1, H-2);
-      if (grid[y][x] === T.FLOOR && items[y][x] === IT.NONE && !enemyAt(x,y) && !(player.x===x && player.y===y)) {
-        return {x,y};
-      }
-    }
-    // fallback scan
-    for (let y=1;y<H-1;y++) for (let x=1;x<W-1;x++) {
-      if (grid[y][x]===T.FLOOR && items[y][x]===IT.NONE && !enemyAt(x,y) && !(player.x===x && player.y===y)) return {x,y};
-    }
-    return {x:1,y:1};
-  }
-
-  function enemyAt(x,y) {
-    return enemies.find(e => e.x===x && e.y===y) || null;
-  }
-
-  function generateDungeon(newSeed, keepProgression=false) {
-    seed = newSeed;
-    rng = mulberry32(seed + floor * 1013904223); // mix with floor
-    seedEl.textContent = String(seed >>> 0);
-
-    initArrays();
-
-    // rooms
-    const rooms = [];
-    for (let i = 0; i < ROOM_ATTEMPTS; i++) {
-      const w = randInt(MIN_ROOM, MAX_ROOM);
-      const h = randInt(MIN_ROOM, MAX_ROOM);
-      const x = randInt(1, W - w - 2);
-      const y = randInt(1, H - h - 2);
-      const r = {x,y,w,h, cx: x + (w>>1), cy: y + (h>>1)};
-      if (!roomIntersects(r, rooms)) {
-        carveRoom(x,y,w,h);
-        if (rooms.length > 0) {
-          const prev = rooms[rooms.length-1];
-          carveCorridor({x: prev.cx, y: prev.cy}, {x: r.cx, y: r.cy});
-        }
-        rooms.push(r);
-      }
-    }
-
-    if (rooms.length === 0) {
-      // ultra fallback
-      carveRoom(2,2, W-4, H-4);
-      rooms.push({x:2,y:2,w:W-4,h:H-4,cx:W>>1,cy:H>>1});
-    }
-
-    // place player at center of first room
-    player.x = rooms[0].cx;
-    player.y = rooms[0].cy;
-
-    // place stairs far from player
-    let stairs = null;
-    let bestDist = -1;
-    for (const r of rooms) {
-      const candidate = {x:r.cx, y:r.cy};
-      const d = manhattan(candidate, player);
-      if (d > bestDist) { bestDist = d; stairs = candidate; }
-    }
-    items[stairs.y][stairs.x] = IT.STAIRS;
-
-    // enemies (scale with floor)
-    const enemyCount = clamp(Math.floor(MAX_ENEMIES_BASE + floor*1.2 + rng()*3), 6, 22);
-    for (let i=0;i<enemyCount;i++) {
-      const p = randomFloorCell();
-      // keep enemies not too close to start
-      if (manhattan(p, player) < 6) { i--; continue; }
-      enemies.push({
-        x:p.x, y:p.y,
-        hp: 3 + Math.floor(floor*0.6) + randInt(0,2),
-        atk: 1 + Math.floor(floor*0.25)
+  // ===== Background blobs =====
+  function makeBlobs(n){
+    const arr = [];
+    for (let i=0;i<n;i++){
+      arr.push({
+        x: rand(0,W), y: rand(0,H),
+        r: rand(60, 190),
+        vx: rand(-22, 22),
+        vy: rand(-18, 18),
+        a: rand(0.06, 0.16),
+        hue: rand(190, 310)
       });
     }
+    return arr;
+  }
 
-    // items
-    const goldCount = clamp(8 + Math.floor(floor*1.4), 8, 30);
-    const healCount = clamp(5 + Math.floor(floor*0.7), 4, 18);
+  // ===== Coordinate mapping =====
+  function toWorld(e){
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * W;
+    const y = (e.clientY - rect.top) / rect.height * H;
+    return {x,y};
+  }
 
-    for (let i=0;i<goldCount;i++) {
-      const p = randomFloorCell();
-      items[p.y][p.x] = IT.GOLD;
+  // ===== Enemy spawning =====
+  function spawnEnemy() {
+    const edge = Math.floor(rand(0,4));
+    let x,y;
+    if (edge===0) { x = rand(0,W); y = -30; }
+    else if (edge===1) { x = W+30; y = rand(0,H); }
+    else if (edge===2) { x = rand(0,W); y = H+30; }
+    else { x = -30; y = rand(0,H); }
+
+    const r = rand(14, 26);
+    const hp = enemyBaseHP + rand(-1, 2) + Math.floor(wave*0.6);
+    const speed = enemyBaseSpeed + rand(-10, 25) + wave*6;
+
+    enemies.push({ x,y,r,hp, speed, touchCd: 0 });
+  }
+
+  function advanceDifficulty() {
+    const newWave = 1 + Math.floor(score / 35);
+    if (newWave !== wave) {
+      wave = newWave;
+      // faster spawns + tougher enemies
+      spawnEvery = clamp(0.85 - (wave-1)*0.07, 0.34, 0.85);
+      enemyBaseHP = 5 + (wave-1)*2;
+      enemyBaseSpeed = 95 + (wave-1)*10;
+      player.hpMax = 10 + Math.floor((wave-1)*1.5);
+      player.hp = clamp(player.hp + 2, 0, player.hpMax);
+      setStatus(`Wave ${wave}.`);
+      syncUI();
     }
-    for (let i=0;i<healCount;i++) {
-      const p = randomFloorCell();
-      items[p.y][p.x] = IT.HEAL;
+  }
+
+  // ===== Particles =====
+  function makeSpellParticle(x,y,vx,vy,life,rad,power,hue){
+    return { x,y,vx,vy, life, maxLife: life, r: rad, power, hue };
+  }
+  function makeSpark(x,y,strength,white=false){
+    const a = rand(0, Math.PI*2);
+    const sp = rand(180, 780) * strength;
+    return {
+      x,y,
+      vx: Math.cos(a)*sp,
+      vy: Math.sin(a)*sp - rand(0, 240),
+      r: rand(1.5, 4.5) * (white ? 1.2 : 1),
+      life: rand(0.25, 0.85),
+      maxLife: 0.85,
+      hue: white ? 0 : rand(190, 320),
+      white
+    };
+  }
+
+  // ===== Spell casting =====
+  function cast(dt){
+    // player movement: gently follow pointer while casting (so it feels "arena")
+    // player tries to stay somewhat under your finger
+    const dx = pointerX - player.x;
+    const dy = pointerY - player.y;
+    const dist = Math.hypot(dx,dy);
+    const pull = pointerDown ? 1 : 0.75;
+    const maxStep = player.speed * dt * pull;
+
+    if (dist > 1) {
+      player.x += clamp(dx, -maxStep, maxStep);
+      player.y += clamp(dy, -maxStep, maxStep);
     }
 
-    // reset fog
-    for (let y=0;y<H;y++) for (let x=0;x<W;x++) seen[y][x]=false;
+    player.x = clamp(player.x, 20, W-20);
+    player.y = clamp(player.y, 20, H-20);
 
-    status(`Floor ${floor}. Explore.`);
-    syncUI();
-    draw();
-  }
+    // emit based on spell mode
+    const vx = (pointerX - lastPointerX) / Math.max(0.001, dt);
+    const vy = (pointerY - lastPointerY) / Math.max(0.001, dt);
+    const speed = Math.hypot(vx,vy);
 
-  // ========= Gameplay =========
-  function status(msg) {
-    statusEl.textContent = msg;
-  }
+    // emission rate depends on motion
+    const emit = pointerDown ? clamp(Math.floor(6 + speed/220), 6, 20) : 0;
 
-  function syncUI() {
-    floorEl.textContent = String(floor);
-    hpEl.textContent = String(player.hp);
-    hpMaxEl.textContent = String(player.hpMax);
-    atkEl.textContent = String(player.atk);
-    goldEl.textContent = String(player.gold);
-  }
+    if (emit <= 0) return;
 
-  function passable(x,y) {
-    return x>=0 && y>=0 && x<W && y<H && grid[y][x] === T.FLOOR;
-  }
+    if (spellMode === SpellMode.VORTEX) {
+      // swirl around pointer: looks fluid-ish
+      for (let i=0;i<emit;i++){
+        const ang = rand(0, Math.PI*2);
+        const rr = rand(4, 26);
+        const px = pointerX + Math.cos(ang)*rr;
+        const py = pointerY + Math.sin(ang)*rr;
 
-  function reveal() {
-    for (let dy=-VIEW_RADIUS; dy<=VIEW_RADIUS; dy++) {
-      for (let dx=-VIEW_RADIUS; dx<=VIEW_RADIUS; dx++) {
-        const x = player.x + dx, y = player.y + dy;
-        if (x<0||y<0||x>=W||y>=H) continue;
-        if (dx*dx + dy*dy <= VIEW_RADIUS*VIEW_RADIUS) seen[y][x]=true;
+        const swirl = 1;
+        const tvx = -Math.sin(ang) * rand(140, 420) * swirl + rand(-40,40);
+        const tvy =  Math.cos(ang) * rand(140, 420) * swirl + rand(-40,40);
+
+        const life = rand(0.35, 0.85);
+        const rad  = rand(6, 16);
+        const power= rand(0.7, 1.15);
+        const hue  = rand(190, 310);
+        spells.push(makeSpellParticle(px,py,tvx,tvy,life,rad,power,hue));
       }
-    }
-  }
-
-  function pickUp() {
-    const it = items[player.y][player.x];
-    if (it === IT.NONE) return;
-
-    if (it === IT.GOLD) {
-      const g = 1 + Math.floor(rng()*3) + Math.floor(floor*0.25);
-      player.gold += g;
-      items[player.y][player.x] = IT.NONE;
-      status(`Picked up ${g} gold.`);
-    } else if (it === IT.HEAL) {
-      const heal = 3 + Math.floor(rng()*4) + Math.floor(floor*0.15);
-      const before = player.hp;
-      player.hp = clamp(player.hp + heal, 0, player.hpMax);
-      items[player.y][player.x] = IT.NONE;
-      status(before === player.hp ? `Heal wasted (already full).` : `Healed +${player.hp - before}.`);
-    } else if (it === IT.STAIRS) {
-      status(`Stairs found. Tap “Next Floor” or press Enter.`);
-    }
-  }
-
-  function attack(attacker, defender) {
-    // small randomness
-    const roll = (base) => Math.max(1, base + (rng()<0.5 ? 0 : 1) - (rng()<0.2 ? 1 : 0));
-    const dmg = roll(attacker.atk);
-    defender.hp -= dmg;
-    return dmg;
-  }
-
-  function playerMove(dx, dy) {
-    const nx = player.x + dx, ny = player.y + dy;
-    if (!passable(nx, ny)) { status("Bump."); return; }
-
-    const e = enemyAt(nx, ny);
-    if (e) {
-      // combat (player hits, then enemy hits if alive)
-      const dmg = attack({atk: player.atk}, e);
-      if (e.hp <= 0) {
-        enemies = enemies.filter(x => x !== e);
-        player.x = nx; player.y = ny;
-        player.gold += 1; // small reward
-        status(`You hit for ${dmg}. Enemy defeated (+1 gold).`);
-        pickUp();
-      } else {
-        const ret = attack(e, player);
-        status(`You hit for ${dmg}. Enemy hits for ${ret}.`);
-      }
-      if (player.hp <= 0) {
-        gameOver();
-        return;
+    } else if (spellMode === SpellMode.RAY) {
+      // beam-ish: particles stream forward from player toward pointer
+      const ax = pointerX - player.x, ay = pointerY - player.y;
+      const d = Math.hypot(ax,ay) || 1;
+      const nx = ax/d, ny = ay/d;
+      for (let i=0;i<emit;i++){
+        const spread = rand(-0.25,0.25);
+        const sx = nx*Math.cos(spread) - ny*Math.sin(spread);
+        const sy = nx*Math.sin(spread) + ny*Math.cos(spread);
+        const px = player.x + sx*26 + rand(-6,6);
+        const py = player.y + sy*26 + rand(-6,6);
+        const sp = rand(520, 980);
+        const tvx = sx*sp + rand(-50,50);
+        const tvy = sy*sp + rand(-50,50);
+        spells.push(makeSpellParticle(px,py,tvx,tvy,rand(0.22,0.50),rand(4,10),rand(0.9,1.3),rand(200,290)));
       }
     } else {
-      player.x = nx; player.y = ny;
-      pickUp();
-      status("Move.");
-    }
-
-    // enemy turn after successful action (move or attack)
-    enemyTurn();
-    reveal();
-    syncUI();
-    draw();
-  }
-
-  function enemyTurn() {
-    // simple "smell" AI: if close, step toward player, else random drift
-    for (const e of enemies) {
-      if (player.hp <= 0) break;
-
-      const d = manhattan(e, player);
-      if (d === 1) {
-        const dmg = attack(e, player);
-        status(`Enemy hits for ${dmg}.`);
-        if (player.hp <= 0) { gameOver(); return; }
-        continue;
+      // NOVA: ring bursts around pointer while dragging
+      for (let i=0;i<emit;i++){
+        const ang = rand(0, Math.PI*2);
+        const px = pointerX + Math.cos(ang)*rand(0,12);
+        const py = pointerY + Math.sin(ang)*rand(0,12);
+        const sp = rand(360, 760);
+        spells.push(makeSpellParticle(px,py,Math.cos(ang)*sp,Math.sin(ang)*sp,rand(0.30,0.65),rand(6,14),rand(0.85,1.25),rand(260,330)));
       }
+    }
 
-      let dx = 0, dy = 0;
-      if (d <= 7 && rng() < 0.85) {
-        // pursue
-        if (Math.abs(player.x - e.x) > Math.abs(player.y - e.y)) dx = Math.sign(player.x - e.x);
-        else dy = Math.sign(player.y - e.y);
-        // occasionally try the other axis
-        if (rng() < 0.25) { [dx,dy] = [dy,dx]; }
-      } else {
-        // wander
-        const r = randInt(0,3);
-        dx = [1,-1,0,0][r];
-        dy = [0,0,1,-1][r];
+    // sparks (just visuals) — cheaper than spells
+    const nS = Math.floor(emit/2);
+    for (let i=0;i<nS;i++){
+      sparks.push(makeSpark(pointerX, pointerY, 0.45, false));
+    }
+  }
+
+  // ===== Physics / Damage =====
+  function updateSpells(dt){
+    for (let i=spells.length-1;i>=0;i--){
+      const p = spells[i];
+      p.life -= dt;
+      if (p.life <= 0) { spells.splice(i,1); continue; }
+
+      // drag + mild curl to feel "fluid"
+      p.vx *= (1 - dt*1.6);
+      p.vy *= (1 - dt*1.6);
+
+      // tiny curl around pointer when casting
+      const dx = p.x - pointerX, dy = p.y - pointerY;
+      const d = Math.hypot(dx,dy) || 1;
+      const curl = pointerDown ? 140 : 40;
+      p.vx += (-dy/d) * curl * dt * 0.25;
+      p.vy += ( dx/d) * curl * dt * 0.25;
+
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      // keep in bounds a bit
+      if (p.x < -60 || p.y < -60 || p.x > W+60 || p.y > H+60) {
+        spells.splice(i,1);
       }
-
-      const nx = e.x + dx, ny = e.y + dy;
-      if (nx===player.x && ny===player.y) continue;
-      if (!passable(nx, ny)) continue;
-      if (enemyAt(nx, ny)) continue;
-      // don't step onto stairs to avoid annoyance
-      if (items[ny][nx] === IT.STAIRS) continue;
-
-      e.x = nx; e.y = ny;
     }
   }
 
-  function gameOver() {
-    status(`You died on floor ${floor}. Tap “New Dungeon”.`);
-    // soft reset player stats but keep best run? For simplicity: reset everything.
-    // (If you want a roguelike "meta-progression", we can add it.)
-    draw(true);
-  }
-
-  function nextFloor() {
-    if (items[player.y][player.x] !== IT.STAIRS) {
-      status("You need to stand on the stairs (↧).");
-      return;
+  function updateSparks(dt){
+    for (let i=sparks.length-1;i>=0;i--){
+      const s = sparks[i];
+      s.life -= dt;
+      if (s.life <= 0) { sparks.splice(i,1); continue; }
+      s.x += s.vx*dt;
+      s.y += s.vy*dt;
+      s.vy += 520*dt;
+      s.vx *= (1 - dt*0.8);
+      s.vy *= (1 - dt*0.2);
     }
-    floor += 1;
-    // progression
-    if (floor % 2 === 0) { player.hpMax += 2; player.atk += 1; }
-    player.hp = player.hpMax;
-    status(`Descending…`);
-    floorEl.textContent = String(floor);
-    generateDungeon(seed, true);
   }
 
-  // ========= Rendering =========
-  function draw(dead=false) {
-    const cw = canvas.width, ch = canvas.height;
-    const cell = Math.floor(Math.min(cw / W, ch / H));
-    const ox = Math.floor((cw - cell * W) / 2);
-    const oy = Math.floor((ch - cell * H) / 2);
+  function updateEnemies(dt){
+    for (let i=enemies.length-1;i>=0;i--){
+      const e = enemies[i];
+      e.touchCd = Math.max(0, e.touchCd - dt);
 
-    ctx.clearRect(0,0,cw,ch);
+      // chase player
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      const d = Math.hypot(dx,dy) || 1;
+      const nx = dx/d, ny = dy/d;
 
-    // background vignette
-    ctx.save();
-    const g = ctx.createRadialGradient(cw/2, ch*0.2, 50, cw/2, ch/2, cw*0.65);
-    g.addColorStop(0, 'rgba(120,160,255,0.12)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0,0,cw,ch);
-    ctx.restore();
-
-    reveal();
-
-    // tiles
-    for (let y=0;y<H;y++) {
-      for (let x=0;x<W;x++) {
-        const vis = seen[y][x];
-        const px = ox + x*cell, py = oy + y*cell;
-
-        if (!vis) {
-          ctx.fillStyle = 'rgba(0,0,0,0.88)';
-          ctx.fillRect(px, py, cell, cell);
-          continue;
-        }
-
-        if (grid[y][x] === T.WALL) {
-          ctx.fillStyle = 'rgba(255,255,255,0.06)';
-          ctx.fillRect(px, py, cell, cell);
-        } else {
-          ctx.fillStyle = 'rgba(255,255,255,0.02)';
-          ctx.fillRect(px, py, cell, cell);
+      // mild "avoid clumping"
+      let ax = 0, ay = 0;
+      for (let j=0;j<enemies.length;j++){
+        if (j===i) continue;
+        const o = enemies[j];
+        const ddx = e.x - o.x;
+        const ddy = e.y - o.y;
+        const dist = Math.hypot(ddx,ddy);
+        if (dist > 0 && dist < 44) {
+          ax += (ddx/dist) * (44 - dist) * 0.9;
+          ay += (ddy/dist) * (44 - dist) * 0.9;
         }
       }
-    }
 
-    // subtle grid lines (only on seen)
-    ctx.save();
-    ctx.globalAlpha = 0.08;
-    ctx.strokeStyle = '#ffffff';
-    for (let y=0;y<=H;y++) {
-      const py = oy + y*cell;
-      ctx.beginPath();
-      ctx.moveTo(ox, py);
-      ctx.lineTo(ox + W*cell, py);
-      ctx.stroke();
-    }
-    for (let x=0;x<=W;x++) {
-      const px = ox + x*cell;
-      ctx.beginPath();
-      ctx.moveTo(px, oy);
-      ctx.lineTo(px, oy + H*cell);
-      ctx.stroke();
-    }
-    ctx.restore();
+      const vx = nx*e.speed + ax;
+      const vy = ny*e.speed + ay;
+      e.x += vx*dt;
+      e.y += vy*dt;
 
-    // items
-    for (let y=0;y<H;y++) {
-      for (let x=0;x<W;x++) {
-        if (!seen[y][x]) continue;
-        if (grid[y][x] !== T.FLOOR) continue;
-        const it = items[y][x];
-        if (it === IT.NONE) continue;
-
-        const cx = ox + x*cell + cell/2;
-        const cy = oy + y*cell + cell/2;
-
-        ctx.save();
-        if (it === IT.GOLD) {
-          ctx.fillStyle = 'rgba(255,220,120,0.95)';
-          ctx.shadowColor = 'rgba(255,220,120,0.35)';
-          ctx.shadowBlur = 10;
-          ctx.beginPath();
-          ctx.arc(cx, cy, cell*0.18, 0, Math.PI*2);
-          ctx.fill();
-        } else if (it === IT.HEAL) {
-          ctx.fillStyle = 'rgba(120,255,180,0.95)';
-          ctx.shadowColor = 'rgba(120,255,180,0.35)';
-          ctx.shadowBlur = 10;
-          ctx.fillRect(cx - cell*0.07, cy - cell*0.22, cell*0.14, cell*0.44);
-          ctx.fillRect(cx - cell*0.22, cy - cell*0.07, cell*0.44, cell*0.14);
-        } else if (it === IT.STAIRS) {
-          ctx.strokeStyle = 'rgba(190,200,255,0.95)';
-          ctx.shadowColor = 'rgba(190,200,255,0.35)';
-          ctx.shadowBlur = 10;
-          ctx.lineWidth = Math.max(2, cell*0.08);
-          ctx.beginPath();
-          ctx.moveTo(cx - cell*0.18, cy - cell*0.10);
-          ctx.lineTo(cx, cy + cell*0.18);
-          ctx.lineTo(cx + cell*0.18, cy - cell*0.10);
-          ctx.stroke();
+      // contact damage
+      const pd = Math.hypot(e.x - player.x, e.y - player.y);
+      if (pd < e.r + player.r + 2) {
+        if (player.invuln <= 0 && e.touchCd <= 0) {
+          player.hp -= 1.2;
+          player.invuln = 0.25;
+          e.touchCd = 0.35;
+          setStatus('Ouch.');
+          if (player.hp <= 0) { gameOverNow(); return; }
         }
-        ctx.restore();
+      }
+
+      // spell damage: check against nearby spell particles
+      // (simple: sample a few spells each enemy per frame)
+      if (spells.length) {
+        const checks = Math.min(18, spells.length);
+        for (let k=0;k<checks;k++){
+          const idx = (Math.random() * spells.length) | 0;
+          const p = spells[idx];
+          const dd = Math.hypot(e.x - p.x, e.y - p.y);
+          if (dd < e.r + p.r) {
+            e.hp -= p.power * 0.55;
+            // impact spark
+            if (Math.random() < 0.25) sparks.push(makeSpark(e.x, e.y, 0.5, false));
+            // "consume" some energy
+            p.life -= 0.06;
+          }
+        }
+      }
+
+      if (e.hp <= 0) {
+        enemies.splice(i,1);
+        score += 3;
+        // death burst
+        for (let b=0;b<18;b++) sparks.push(makeSpark(e.x, e.y, 0.7, Math.random()<0.25));
+        if (Math.random() < 0.12) {
+          // small heal pickup effect: just heal directly (no item to chase)
+          player.hp = clamp(player.hp + 0.8, 0, player.hpMax);
+        }
+        advanceDifficulty();
+        syncUI();
       }
     }
+  }
 
-    // enemies
-    for (const e of enemies) {
-      if (!seen[e.y][e.x]) continue;
-      const cx = ox + e.x*cell + cell/2;
-      const cy = oy + e.y*cell + cell/2;
+  function updateBlobs(dt){
+    for (const b of blobs){
+      b.x += b.vx*dt;
+      b.y += b.vy*dt;
+      if (b.x < -200) b.x = W+200;
+      if (b.x > W+200) b.x = -200;
+      if (b.y < -200) b.y = H+200;
+      if (b.y > H+200) b.y = -200;
+    }
+  }
+
+  // ===== Rendering =====
+  function drawBackground(){
+    // drifting glow blobs
+    for (const b of blobs){
       ctx.save();
-      ctx.fillStyle = 'rgba(255,90,110,0.95)';
-      ctx.shadowColor = 'rgba(255,90,110,0.35)';
-      ctx.shadowBlur = 12;
+      ctx.globalAlpha = b.a;
+      const grad = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+      grad.addColorStop(0, `hsla(${b.hue}, 90%, 60%, 1)`);
+      grad.addColorStop(1, `hsla(${b.hue}, 90%, 60%, 0)`);
+      ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(cx, cy, cell*0.26, 0, Math.PI*2);
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
       ctx.fill();
-
-      // tiny HP pip
-      ctx.globalAlpha = 0.7;
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(cx - cell*0.22, cy + cell*0.30, cell*0.44, cell*0.10);
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      const pct = clamp(e.hp / (3 + Math.floor(floor*0.6) + 2), 0, 1);
-      ctx.fillRect(cx - cell*0.22, cy + cell*0.30, cell*0.44*pct, cell*0.10);
       ctx.restore();
     }
 
-    // player
-    const pcx = ox + player.x*cell + cell/2;
-    const pcy = oy + player.y*cell + cell/2;
+    // subtle floor noise dots
     ctx.save();
-    ctx.shadowColor = 'rgba(120,160,255,0.55)';
-    ctx.shadowBlur = 16;
-    ctx.fillStyle = dead ? 'rgba(160,160,160,0.8)' : 'rgba(120,160,255,0.95)';
-    ctx.beginPath();
-    ctx.arc(pcx, pcy, cell*0.28, 0, Math.PI*2);
-    ctx.fill();
+    ctx.globalAlpha = 0.20;
+    for (let i=0;i<70;i++){
+      const x = (i*97)%W;
+      const y = (i*211)%H;
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fillRect(x, y, 2, 2);
+    }
     ctx.restore();
+  }
 
-    // crosshair / focus ring
+  function drawPlayer(){
     ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = Math.max(1, cell*0.05);
+    const a = player.invuln > 0 ? 0.55 : 1;
+    ctx.globalAlpha = a;
+
+    ctx.shadowColor = 'rgba(120,160,255,0.65)';
+    ctx.shadowBlur = 22;
+    ctx.fillStyle = 'rgba(120,160,255,0.92)';
     ctx.beginPath();
-    ctx.arc(pcx, pcy, cell*0.42, 0, Math.PI*2);
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
+    ctx.fill();
+
+    // aim ring
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.r+10, 0, Math.PI*2);
     ctx.stroke();
     ctx.restore();
+  }
 
-    // overlay if dead
-    if (player.hp <= 0) {
+  function drawEnemies(){
+    for (const e of enemies){
       ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0,0,cw,ch);
-      ctx.fillStyle = '#e9eef7';
-      ctx.textAlign = 'center';
-      ctx.font = '800 52px -apple-system, system-ui, sans-serif';
-      ctx.fillText('You Died', cw/2, ch/2 - 10);
-      ctx.globalAlpha = 0.9;
-      ctx.font = '500 18px -apple-system, system-ui, sans-serif';
-      ctx.fillText('Tap New Dungeon to try again', cw/2, ch/2 + 34);
+      ctx.shadowColor = 'rgba(255,90,120,0.55)';
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = 'rgba(255,90,120,0.92)';
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
+      ctx.fill();
+
+      // hp arc
+      const pct = clamp(e.hp / (enemyBaseHP + Math.floor(wave*0.6) + 2), 0, 1);
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r+10, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r+10, -Math.PI/2, -Math.PI/2 + Math.PI*2*pct);
+      ctx.stroke();
+
       ctx.restore();
     }
   }
 
-  // ========= Input =========
-  function handleKey(e) {
-    const k = e.key.toLowerCase();
-    if (player.hp <= 0) return;
+  function drawSpells(){
+    // additive-ish glow look
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const p of spells){
+      const a = clamp(p.life / p.maxLife, 0, 1);
+      ctx.globalAlpha = 0.40 * a;
 
-    if (k === 'arrowup' || k === 'w') playerMove(0,-1);
-    else if (k === 'arrowdown' || k === 's') playerMove(0, 1);
-    else if (k === 'arrowleft' || k === 'a') playerMove(-1,0);
-    else if (k === 'arrowright' || k === 'd') playerMove(1, 0);
-    else if (k === 'enter') nextFloor();
+      const r = p.r * (0.9 + (1-a)*0.4);
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r*2.4);
+      grad.addColorStop(0, `hsla(${p.hue}, 95%, 65%, 0.95)`);
+      grad.addColorStop(0.45, `hsla(${p.hue}, 95%, 60%, 0.35)`);
+      grad.addColorStop(1, `hsla(${p.hue}, 95%, 60%, 0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r*2.4, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
-  window.addEventListener('keydown', (e) => {
-    const keys = ['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d','enter'];
-    if (keys.includes(e.key.toLowerCase())) e.preventDefault();
-    handleKey(e);
-  });
+  function drawSparks(){
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const s of sparks){
+      const a = clamp(s.life / s.maxLife, 0, 1);
+      ctx.globalAlpha = a;
+      if (s.white) ctx.fillStyle = `rgba(255,255,255,${0.9*a})`;
+      else ctx.fillStyle = `hsla(${s.hue}, 95%, 70%, ${0.9*a})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 
+  function drawOverlay(text1, text2){
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#e9eef7';
+    ctx.textAlign = 'center';
+    ctx.font = '900 56px -apple-system, system-ui, sans-serif';
+    ctx.fillText(text1, W/2, H/2 - 10);
+    ctx.globalAlpha = 0.92;
+    ctx.font = '600 18px -apple-system, system-ui, sans-serif';
+    ctx.fillText(text2, W/2, H/2 + 32);
+    ctx.globalAlpha = 0.85;
+    ctx.font = '600 16px -apple-system, system-ui, sans-serif';
+    ctx.fillText('Drag to cast. Avoid contact.', W/2, H/2 + 62);
+    ctx.restore();
+  }
+
+  // ===== Main loop =====
+  let last = performance.now();
+  function frame(now){
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+
+    ctx.clearRect(0,0,W,H);
+
+    drawBackground();
+
+    if (running && !paused && !gameOver){
+      player.invuln = Math.max(0, player.invuln - dt);
+
+      updateBlobs(dt);
+      cast(dt);
+      updateSpells(dt);
+      updateSparks(dt);
+
+      spawnTimer += dt;
+      while (spawnTimer >= spawnEvery){
+        spawnTimer -= spawnEvery;
+        spawnEnemy();
+      }
+
+      updateEnemies(dt);
+      syncUI();
+    } else {
+      updateBlobs(dt);
+      updateSpells(dt);
+      updateSparks(dt);
+    }
+
+    drawSpells();
+    drawSparks();
+    drawEnemies();
+    drawPlayer();
+
+    if (!running && !gameOver && !paused){
+      drawOverlay('Spellpaint Arena', 'Start, then drag to cast.');
+    }
+    if (paused){
+      drawOverlay('Paused', 'Tap Pause to resume.');
+    }
+    if (gameOver){
+      drawOverlay('Game Over', `Score: ${score}  ·  Best: ${best}`);
+    }
+
+    // crosshair / pointer hint
+    if (pointerDown && running && !paused && !gameOver){
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(pointerX, pointerY, 18, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ===== Input =====
   canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
-    touchStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+    pointerDown = true;
+    pointerId = e.pointerId;
+    const p = toWorld(e);
+    pointerX = p.x; pointerY = p.y;
+    lastPointerX = p.x; lastPointerY = p.y;
+
+    if (!running && !gameOver && !paused) {
+      reset();
+      setStatus('Go.');
+    }
+    if (gameOver){
+      reset();
+      setStatus('Go.');
+    }
   });
 
-  canvas.addEventListener('pointerup', (e) => {
-    if (!touchStart || player.hp <= 0) { touchStart = null; return; }
-    const dx = e.clientX - touchStart.x;
-    const dy = e.clientY - touchStart.y;
-    const adx = Math.abs(dx), ady = Math.abs(dy);
-
-    // small swipe threshold
-    const TH = 22;
-    if (adx < TH && ady < TH) { touchStart = null; return; }
-
-    if (adx > ady) playerMove(Math.sign(dx), 0);
-    else playerMove(0, Math.sign(dy));
-
-    touchStart = null;
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pointerDown) return;
+    const p = toWorld(e);
+    lastPointerX = pointerX; lastPointerY = pointerY;
+    pointerX = p.x; pointerY = p.y;
   });
+
+  function endPointer(){
+    pointerDown = false;
+    pointerId = null;
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
 
   // Buttons
-  newBtn.addEventListener('click', () => {
-    floor = 1;
-    player = { x: 1, y: 1, hp: 10, hpMax: 10, atk: 2, gold: 0 };
-    generateDungeon(makeSeed());
+  startBtn.addEventListener('click', () => { reset(); });
+  pauseBtn.addEventListener('click', () => {
+    if (!running && !gameOver) return;
+    if (gameOver) return;
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
   });
 
-  nextBtn.addEventListener('click', () => nextFloor());
+  modeBtn.addEventListener('click', () => {
+    spellMode = (spellMode + 1) % 3;
+    if (spellMode === SpellMode.VORTEX) modeBtn.textContent = 'Spell: Vortex';
+    else if (spellMode === SpellMode.RAY) modeBtn.textContent = 'Spell: Ray';
+    else modeBtn.textContent = 'Spell: Nova';
+  });
 
-  // ========= Start =========
-  function start() {
-    floor = 1;
-    player = { x: 1, y: 1, hp: 10, hpMax: 10, atk: 2, gold: 0 };
-    generateDungeon(makeSeed());
-  }
-
-  start();
+  // ===== Start screen state =====
+  running = false;
+  paused = false;
+  gameOver = false;
+  blobs = makeBlobs(10);
+  setStatus('Drag to cast.');
+  syncUI();
 })();
 </script>
 </body>
