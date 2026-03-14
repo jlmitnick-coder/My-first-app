@@ -632,8 +632,72 @@
   // Neighborhood keywords — articles from localOnly feeds must match at least one
   const SOBO_KEYWORDS = /federal hill|fed hill|locust point|south baltimore|sobo|riverside|pigtown|sowebo|sharp.?leadenhall|fort mchenry|cross street|cherry hill|port covington|westport|key highway|hanover street|light street|covington|middle branch|baltimore peninsula|otterbein/i;
 
-  // CORS proxy for client-side RSS fetching
-  const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+  // CORS proxies for client-side RSS fetching (cascading fallbacks)
+  const CORS_PROXIES = [
+    'https://api.allorigins.win/raw?url=',
+    'https://corsproxy.io/?url=',
+    'https://api.codetabs.com/v1/proxy?quest=',
+  ];
+
+  // Fallback articles shown when all live feeds fail
+  const FALLBACK_ARTICLES = [
+    {
+      title: 'Welcome to South Baltimore News',
+      link: 'https://www.southbmore.com/',
+      description: 'Your hyper-local news source for Federal Hill, Locust Point, Riverside, and surrounding neighborhoods. Live feeds are currently loading — check back shortly for the latest stories.',
+      pubDate: new Date(),
+      source: 'South Baltimore News',
+      image: '',
+      tags: []
+    },
+    {
+      title: 'Federal Hill: A Historic Neighborhood on the Rise',
+      link: 'https://www.southbmore.com/category/federal-hill/',
+      description: 'Federal Hill continues to be one of Baltimore\'s most vibrant neighborhoods with new restaurants, community events, and development projects transforming the area.',
+      pubDate: new Date(Date.now() - 3600000),
+      source: 'SouthBMore',
+      image: '',
+      tags: ['fedhill']
+    },
+    {
+      title: 'Locust Point Community Updates',
+      link: 'https://www.southbmore.com/category/locust-point/',
+      description: 'Stay up to date with the latest news from Locust Point, including waterfront development, local business openings, and neighborhood events.',
+      pubDate: new Date(Date.now() - 7200000),
+      source: 'SouthBMore',
+      image: '',
+      tags: ['locustpoint']
+    },
+    {
+      title: 'Cross Street Market & Food Scene',
+      link: 'https://www.southbmore.com/category/food-drink/',
+      description: 'South Baltimore\'s food and drink scene continues to thrive with Cross Street Market, local restaurants, and new culinary destinations drawing visitors from across the city.',
+      pubDate: new Date(Date.now() - 10800000),
+      source: 'SouthBMore',
+      image: '',
+      tags: ['food', 'fedhill']
+    },
+    {
+      title: 'Port Covington Development Progress',
+      link: 'https://www.southbmore.com/category/port-covington/',
+      description: 'The massive Port Covington redevelopment project continues to reshape South Baltimore\'s waterfront with new residential, commercial, and public spaces.',
+      pubDate: new Date(Date.now() - 14400000),
+      source: 'SouthBMore',
+      image: '',
+      tags: ['development']
+    },
+    {
+      title: 'Riverside Park & Community Events',
+      link: 'https://www.southbmore.com/category/riverside/',
+      description: 'Riverside neighbors gather for seasonal events, park improvements, and community initiatives that make the neighborhood one of South Baltimore\'s best.',
+      pubDate: new Date(Date.now() - 18000000),
+      source: 'SouthBMore',
+      image: '',
+      tags: []
+    },
+  ];
+
+  let usedFallback = false;
 
   // ===== DOM refs =====
   const heroGrid = document.getElementById('heroGrid');
@@ -657,17 +721,21 @@
 
   // ===== Fetch & Parse RSS =====
   async function fetchFeed(feed) {
-    try {
-      const resp = await fetch(CORS_PROXY + encodeURIComponent(feed.url), {
-        signal: AbortSignal.timeout(12000)
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const text = await resp.text();
-      return parseRSS(text, feed);
-    } catch (e) {
-      console.warn(`Failed to fetch ${feed.name}:`, e.message);
-      return [];
+    for (const proxy of CORS_PROXIES) {
+      try {
+        const resp = await fetch(proxy + encodeURIComponent(feed.url), {
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const text = await resp.text();
+        const articles = parseRSS(text, feed);
+        if (articles.length > 0) return articles;
+      } catch (e) {
+        console.warn(`Failed to fetch ${feed.name} via ${proxy.split('/')[2]}:`, e.message);
+      }
     }
+    console.warn(`All proxies failed for ${feed.name}`);
+    return [];
   }
 
   function parseRSS(xml, feed) {
@@ -702,9 +770,13 @@
         if (mediaThumbnail) image = mediaThumbnail.getAttribute('url') || '';
       }
 
-      // For localOnly feeds, skip articles that don't mention SoBo neighborhoods
+      // For localOnly feeds, tag articles that mention SoBo neighborhoods
       const fullText = (title + ' ' + cleanDesc).toLowerCase();
-      if (feed.localOnly && !SOBO_KEYWORDS.test(fullText)) return;
+      const isSoboRelevant = SOBO_KEYWORDS.test(fullText);
+      if (feed.localOnly && !isSoboRelevant) {
+        // Mark as non-local; we'll keep top 2 per feed if no local matches exist
+        tags.push('_nonlocal');
+      }
 
       // Detect neighborhood & topic tags
       const tags = [...feed.tags];
@@ -899,7 +971,18 @@
 
     for (const r of results) {
       if (r.status === 'fulfilled') {
-        articles.push(...r.value);
+        const feedArticles = r.value;
+        const localArticles = feedArticles.filter(a => !a.tags.includes('_nonlocal'));
+        const nonLocalArticles = feedArticles.filter(a => a.tags.includes('_nonlocal'));
+
+        // If a localOnly feed has no SoBo-relevant articles, keep top 2 anyway
+        if (localArticles.length === 0 && nonLocalArticles.length > 0) {
+          const kept = nonLocalArticles.slice(0, 2);
+          kept.forEach(a => { a.tags = a.tags.filter(t => t !== '_nonlocal'); });
+          articles.push(...kept);
+        } else {
+          articles.push(...localArticles);
+        }
       }
     }
 
@@ -917,12 +1000,25 @@
     // Sort by date (newest first)
     unique.sort((a, b) => b.pubDate - a.pubDate);
 
-    allArticles = unique;
+    // If no live articles loaded, use fallback articles
+    if (unique.length === 0) {
+      usedFallback = true;
+      allArticles = FALLBACK_ARTICLES;
+    } else {
+      usedFallback = false;
+      allArticles = unique;
+    }
+
     renderAll();
 
     const updateTime = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    updateStatus.textContent = `Updated ${updateTime}`;
-    lastUpdated.textContent = `Last updated: ${updateTime} \u2014 Auto-refreshes every 15 minutes \u2014 ${allArticles.length} stories from ${FEEDS.length} sources`;
+    if (usedFallback) {
+      updateStatus.textContent = 'Live feeds unavailable';
+      lastUpdated.textContent = `Showing saved highlights \u2014 Live feeds could not be reached \u2014 Will retry automatically`;
+    } else {
+      updateStatus.textContent = `Updated ${updateTime}`;
+      lastUpdated.textContent = `Last updated: ${updateTime} \u2014 Auto-refreshes every 15 minutes \u2014 ${allArticles.length} stories from ${FEEDS.length} sources`;
+    }
   }
 
   // Initial load
