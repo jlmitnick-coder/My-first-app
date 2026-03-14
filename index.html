@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Baltimore & Maryland News</title>
+<title>South Baltimore News</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -145,7 +145,7 @@
     position: relative;
   }
   .ticker-bar::before {
-    content: 'BREAKING';
+    content: 'LATEST';
     position: absolute;
     left: 0;
     top: 0;
@@ -522,20 +522,21 @@
   <div class="masthead-top">
     <span id="currentDate"></span>
     <span class="dot">&bull;</span>
-    <span>Baltimore, Maryland</span>
+    <span>South Baltimore, MD</span>
     <span class="dot">&bull;</span>
     <span id="updateStatus">Loading&hellip;</span>
   </div>
   <div class="masthead-main">
-    <h1>Baltimore <span class="ampersand">&amp;</span> Maryland News</h1>
-    <div class="masthead-sub">Your daily briefing from across the region</div>
+    <h1>South Baltimore <span class="ampersand">News</span></h1>
+    <div class="masthead-sub">Federal Hill &middot; Locust Point &middot; Riverside &amp; Beyond</div>
   </div>
   <nav class="nav-bar" id="navBar">
     <button class="active" data-filter="all">All News</button>
-    <button data-filter="baltimore">Baltimore</button>
-    <button data-filter="maryland">Maryland</button>
-    <button data-filter="politics">Politics</button>
-    <button data-filter="sports">Sports</button>
+    <button data-filter="fedhill">Fed Hill</button>
+    <button data-filter="locustpoint">Locust Point</button>
+    <button data-filter="development">Development</button>
+    <button data-filter="crime">Crime &amp; Safety</button>
+    <button data-filter="food">Food &amp; Drink</button>
   </nav>
 </header>
 
@@ -581,7 +582,7 @@
         <div class="sidebar-section">
           <div class="weather-widget" id="weatherWidget">
             <div class="weather-label">Current Weather</div>
-            <div class="weather-city">Baltimore, MD</div>
+            <div class="weather-city">South Baltimore</div>
             <div class="weather-temp" id="weatherTemp">&mdash;</div>
             <div class="weather-desc" id="weatherDesc">Loading weather&hellip;</div>
           </div>
@@ -604,10 +605,10 @@
 
 <!-- ===== FOOTER ===== -->
 <footer class="site-footer">
-  <div class="footer-brand">Baltimore &amp; Maryland News</div>
+  <div class="footer-brand">South Baltimore News</div>
   <div>Aggregated from public RSS feeds. All content belongs to its respective publishers.</div>
   <div style="margin-top:8px;">
-    Sources: Baltimore Banner &bull; Baltimore Sun &bull; Maryland Matters &bull; WBAL &bull; CBS Baltimore &bull; Baltimore Brew &bull; Maryland Daily Record
+    Sources: SouthBMore.com &bull; Baltimore Brew &bull; Baltimore Fishbowl &bull; Baltimore Banner &bull; Baltimore Sun &bull; CBS Baltimore &bull; r/baltimore
   </div>
 </footer>
 
@@ -616,15 +617,20 @@
   'use strict';
 
   // ===== Configuration: RSS feed sources =====
+  // localOnly: false = show all articles (hyper-local source)
+  // localOnly: true  = only show articles mentioning SoBo neighborhoods
   const FEEDS = [
-    { name: 'Baltimore Banner', url: 'https://www.thebaltimorebanner.com/arc/outboundfeeds/rss/?outputType=xml', tags: ['baltimore'] },
-    { name: 'Baltimore Sun', url: 'https://www.baltimoresun.com/arc/outboundfeeds/rss/?outputType=xml', tags: ['baltimore'] },
-    { name: 'Maryland Matters', url: 'https://www.marylandmatters.org/feed/', tags: ['maryland', 'politics'] },
-    { name: 'WBAL TV', url: 'https://www.wbaltv.com/topstories-rss', tags: ['baltimore', 'maryland'] },
-    { name: 'CBS Baltimore', url: 'https://www.cbsnews.com/baltimore/latest/rss/', tags: ['baltimore'] },
-    { name: 'Baltimore Brew', url: 'https://www.baltimorebrew.com/feed/', tags: ['baltimore'] },
-    { name: 'MD Daily Record', url: 'https://thedailyrecord.com/feed/', tags: ['maryland'] },
+    { name: 'SouthBMore', url: 'https://www.southbmore.com/feed/', tags: [], localOnly: false },
+    { name: 'Baltimore Brew', url: 'https://www.baltimorebrew.com/feed/', tags: [], localOnly: false },
+    { name: 'Baltimore Fishbowl', url: 'https://baltimorefishbowl.com/feed', tags: [], localOnly: false },
+    { name: 'Baltimore Banner', url: 'https://www.thebaltimorebanner.com/arc/outboundfeeds/rss/?outputType=xml', tags: [], localOnly: true },
+    { name: 'Baltimore Sun', url: 'https://www.baltimoresun.com/arc/outboundfeeds/rss/?outputType=xml', tags: [], localOnly: true },
+    { name: 'CBS Baltimore', url: 'https://www.cbsnews.com/baltimore/latest/rss/', tags: [], localOnly: true },
+    { name: 'r/baltimore', url: 'https://www.reddit.com/r/baltimore/new/.rss', tags: [], localOnly: true },
   ];
+
+  // Neighborhood keywords — articles from localOnly feeds must match at least one
+  const SOBO_KEYWORDS = /federal hill|fed hill|locust point|south baltimore|sobo|riverside|pigtown|sowebo|sharp.?leadenhall|fort mchenry|cross street|cherry hill|port covington|westport|key highway|hanover street|light street|covington|middle branch|baltimore peninsula|otterbein/i;
 
   // CORS proxy for client-side RSS fetching
   const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
@@ -696,13 +702,17 @@
         if (mediaThumbnail) image = mediaThumbnail.getAttribute('url') || '';
       }
 
-      // Detect tags from title/description
-      const text = (title + ' ' + cleanDesc).toLowerCase();
+      // For localOnly feeds, skip articles that don't mention SoBo neighborhoods
+      const fullText = (title + ' ' + cleanDesc).toLowerCase();
+      if (feed.localOnly && !SOBO_KEYWORDS.test(fullText)) return;
+
+      // Detect neighborhood & topic tags
       const tags = [...feed.tags];
-      if (/sport|oriole|raven|terp|lacrosse|basketball|football/.test(text)) tags.push('sports');
-      if (/governor|legislat|council|mayor|congress|senat|politic|vote|elect|bill |law /.test(text)) tags.push('politics');
-      if (/baltimore/.test(text) && !tags.includes('baltimore')) tags.push('baltimore');
-      if (/maryland|annapolis/.test(text) && !tags.includes('maryland')) tags.push('maryland');
+      if (/federal hill|fed hill/.test(fullText)) tags.push('fedhill');
+      if (/locust point/.test(fullText)) tags.push('locustpoint');
+      if (/restaurant|bar |dining|food|brew|cafe|coffee|kitchen|bistro|tavern|menu/.test(fullText)) tags.push('food');
+      if (/develop|construct|build|zoning|permit|project|renovation|demolit/.test(fullText)) tags.push('development');
+      if (/crime|shoot|police|arrest|safety|carjack|robbery|assault|homicide|stabbing|theft/.test(fullText)) tags.push('crime');
 
       articles.push({
         title,
@@ -812,7 +822,7 @@
             <div class="card-excerpt">${esc(a.description)}</div>
             <div class="card-meta">
               <span>${timeAgo(a.pubDate)}</span>
-              <span>${a.tags.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(' · ')}</span>
+              <span>${a.tags.map(t => tagLabel(t)).join(' · ')}</span>
             </div>
           </div>
         </a>
@@ -850,6 +860,12 @@
     d.textContent = str;
     return d.innerHTML;
   }
+
+  const TAG_LABELS = {
+    fedhill: 'Fed Hill', locustpoint: 'Locust Point',
+    food: 'Food & Drink', development: 'Development', crime: 'Crime & Safety'
+  };
+  function tagLabel(t) { return TAG_LABELS[t] || t.charAt(0).toUpperCase() + t.slice(1); }
 
   // ===== Weather (free API, no key) =====
   async function fetchWeather() {
