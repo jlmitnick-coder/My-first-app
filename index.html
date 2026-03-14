@@ -770,21 +770,19 @@
         if (mediaThumbnail) image = mediaThumbnail.getAttribute('url') || '';
       }
 
-      // For localOnly feeds, tag articles that mention SoBo neighborhoods
-      const fullText = (title + ' ' + cleanDesc).toLowerCase();
-      const isSoboRelevant = SOBO_KEYWORDS.test(fullText);
-      if (feed.localOnly && !isSoboRelevant) {
-        // Mark as non-local; we'll keep top 2 per feed if no local matches exist
-        tags.push('_nonlocal');
-      }
-
       // Detect neighborhood & topic tags
+      const fullText = (title + ' ' + cleanDesc).toLowerCase();
       const tags = [...feed.tags];
       if (/federal hill|fed hill/.test(fullText)) tags.push('fedhill');
       if (/locust point/.test(fullText)) tags.push('locustpoint');
       if (/restaurant|bar |dining|food|brew|cafe|coffee|kitchen|bistro|tavern|menu/.test(fullText)) tags.push('food');
       if (/develop|construct|build|zoning|permit|project|renovation|demolit/.test(fullText)) tags.push('development');
       if (/crime|shoot|police|arrest|safety|carjack|robbery|assault|homicide|stabbing|theft/.test(fullText)) tags.push('crime');
+
+      // For localOnly feeds, mark articles that don't mention SoBo neighborhoods
+      if (feed.localOnly && !SOBO_KEYWORDS.test(fullText)) {
+        tags.push('_nonlocal');
+      }
 
       articles.push({
         title,
@@ -963,30 +961,20 @@
     renderAll();
   });
 
-  // ===== Init =====
-  async function loadAllFeeds() {
-    updateStatus.textContent = 'Updating\u2026';
-    const results = await Promise.allSettled(FEEDS.map(f => fetchFeed(f)));
-    const articles = [];
-
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        const feedArticles = r.value;
-        const localArticles = feedArticles.filter(a => !a.tags.includes('_nonlocal'));
-        const nonLocalArticles = feedArticles.filter(a => a.tags.includes('_nonlocal'));
-
-        // If a localOnly feed has no SoBo-relevant articles, keep top 2 anyway
-        if (localArticles.length === 0 && nonLocalArticles.length > 0) {
-          const kept = nonLocalArticles.slice(0, 2);
-          kept.forEach(a => { a.tags = a.tags.filter(t => t !== '_nonlocal'); });
-          articles.push(...kept);
-        } else {
-          articles.push(...localArticles);
-        }
-      }
+  // ===== Helpers =====
+  function processLocalOnly(feedArticles) {
+    const local = feedArticles.filter(a => !a.tags.includes('_nonlocal'));
+    const nonLocal = feedArticles.filter(a => a.tags.includes('_nonlocal'));
+    // If no SoBo-relevant articles, keep top 2 from the feed anyway
+    if (local.length === 0 && nonLocal.length > 0) {
+      const kept = nonLocal.slice(0, 2);
+      kept.forEach(a => { a.tags = a.tags.filter(t => t !== '_nonlocal'); });
+      return kept;
     }
+    return local;
+  }
 
-    // Deduplicate by title similarity
+  function dedupAndSort(articles) {
     const seen = new Set();
     const unique = [];
     for (const a of articles) {
@@ -996,19 +984,53 @@
         unique.push(a);
       }
     }
-
-    // Sort by date (newest first)
     unique.sort((a, b) => b.pubDate - a.pubDate);
 
-    // If no live articles loaded, use fallback articles
-    if (unique.length === 0) {
+    // Cap at 4 articles per source to ensure diversity
+    const perSource = {};
+    const diverse = [];
+    for (const a of unique) {
+      const count = perSource[a.source] || 0;
+      if (count < 4) {
+        diverse.push(a);
+        perSource[a.source] = count + 1;
+      }
+    }
+    return diverse;
+  }
+
+  // ===== Init =====
+  let liveArticlesRaw = []; // accumulates articles as feeds resolve
+
+  async function loadAllFeeds() {
+    updateStatus.textContent = 'Loading live stories\u2026';
+    liveArticlesRaw = [];
+    let feedsResolved = 0;
+
+    // Fetch all feeds in parallel, but render progressively as each resolves
+    const promises = FEEDS.map(async (feed) => {
+      const articles = await fetchFeed(feed);
+      feedsResolved++;
+      const processed = processLocalOnly(articles);
+      if (processed.length > 0) {
+        liveArticlesRaw.push(...processed);
+        allArticles = dedupAndSort(liveArticlesRaw);
+        usedFallback = false;
+        renderAll();
+        updateStatus.textContent = `Loading feeds (${feedsResolved}/${FEEDS.length})\u2026`;
+      }
+    });
+
+    await Promise.allSettled(promises);
+
+    // Final render with all data
+    if (liveArticlesRaw.length > 0) {
+      allArticles = dedupAndSort(liveArticlesRaw);
+      usedFallback = false;
+    } else {
       usedFallback = true;
       allArticles = FALLBACK_ARTICLES;
-    } else {
-      usedFallback = false;
-      allArticles = unique;
     }
-
     renderAll();
 
     const updateTime = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -1021,7 +1043,13 @@
     }
   }
 
-  // Initial load
+  // Show fallback articles immediately so the page isn't empty
+  allArticles = FALLBACK_ARTICLES;
+  usedFallback = true;
+  renderAll();
+  updateStatus.textContent = 'Loading live stories\u2026';
+
+  // Then fetch live feeds (progressive rendering replaces fallbacks as feeds arrive)
   loadAllFeeds();
   fetchWeather();
 
